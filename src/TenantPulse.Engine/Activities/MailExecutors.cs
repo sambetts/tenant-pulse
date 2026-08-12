@@ -74,8 +74,8 @@ public sealed class SendMailExecutor(
             // Sending moves the message from Drafts to Sent Items and Exchange assigns it a NEW id,
             // so the draft id is useless for purging. Resolve the sent copy by its internet message
             // id, which is stable across the move.
-            var sentId = await ResolveSentMessageIdAsync(upn, internetMessageId, cancellationToken)
-                .ConfigureAwait(false);
+            var sentId = await ExecutorHelpers.ResolveSentMessageIdAsync(
+                graph, logger, upn, internetMessageId, cancellationToken).ConfigureAwait(false);
 
             logger.LogInformation("Sent simulated mail {MessageId} as {UserPrincipalName}.",
                 sentId ?? messageId, upn);
@@ -101,64 +101,14 @@ public sealed class SendMailExecutor(
         }
     }
 
-    /// <summary>
-    /// Finds the Sent Items copy of a message that has just been sent, by its internet message id.
-    /// Returns null when it can't be resolved — in which case the mail is still sent, it just can't
-    /// be purged later.
-    /// </summary>
-    private async Task<string?> ResolveSentMessageIdAsync(
-        string upn,
-        string? internetMessageId,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(internetMessageId))
-        {
-            return null;
-        }
-
-        try
-        {
-            // Exchange indexes the sent copy asynchronously, so a first miss is normal.
-            for (var attempt = 0; attempt < 3; attempt++)
-            {
-                var escaped = internetMessageId.Replace("'", "''", StringComparison.Ordinal);
-                var results = await graph.GetPagedAsync(
-                    upn,
-                    $"users/{upn}/mailFolders/sentitems/messages" +
-                    $"?$filter=internetMessageId eq '{Uri.EscapeDataString(escaped)}'&$select=id&$top=1",
-                    maxItems: 1,
-                    cancellationToken).ConfigureAwait(false);
-
-                var id = results.Count > 0 ? results[0].GetStringOrNull("id") : null;
-                if (!string.IsNullOrWhiteSpace(id))
-                {
-                    return id;
-                }
-
-                await Task.Delay(TimeSpan.FromSeconds(1 + attempt), cancellationToken).ConfigureAwait(false);
-            }
-        }
-        catch (GraphException ex)
-        {
-            logger.LogDebug("Could not resolve the sent copy for {Upn} ({Status}); it will not be purgeable.",
-                upn, ex.StatusCode);
-        }
-
-        return null;
-    }
-
-    private static string MarkerHeaderName(TenantPulseOptions options)
-    {
-        var configured = string.IsNullOrWhiteSpace(options.Simulation.MarkerHeaderName)
-            ? "X-TenantPulse"
-            : options.Simulation.MarkerHeaderName.Trim();
-        return configured.StartsWith("X-", StringComparison.OrdinalIgnoreCase) ? configured : $"X-{configured}";
-    }
+    private static string MarkerHeaderName(TenantPulseOptions options) =>
+        ExecutorHelpers.MarkerHeaderName(options);
 }
 
 public sealed class ReplyMailExecutor(
     IGraphClient graph,
     IContentGenerator contentGenerator,
+    TenantPulseOptions options,
     ILogger<ReplyMailExecutor> logger) : IActivityExecutor
 {
     public ActivityKind Kind => ActivityKind.ReplyMail;
@@ -207,13 +157,64 @@ public sealed class ReplyMailExecutor(
                 return ActivityResult.Simulated($"Would reply to '{subject}' in {upn}'s inbox.");
             }
 
-            await graph.PostAsync(
+            // The /reply action sends immediately and returns nothing, so the reply that lands in
+            // Sent Items has no id to journal and could never be purged. createReply produces a
+            // draft instead: fill it in, send it, then resolve the sent copy.
+            //
+            // The marker header has to be supplied here, at creation — PATCHing
+            // internetMessageHeaders onto an existing draft fails with ErrorInvalidPropertySet.
+            var draft = await graph.PostAsync(
                 upn,
-                $"users/{upn}/messages/{messageId}/reply",
-                new { comment = content.Body },
+                $"users/{upn}/messages/{messageId}/createReply",
+                new
+                {
+                    message = new
+                    {
+                        internetMessageHeaders = new[]
+                        {
+                            new { name = ExecutorHelpers.MarkerHeaderName(options), value = options.Simulation.MarkerValue }
+                        }
+                    }
+                },
                 cancellationToken).ConfigureAwait(false);
 
-            return ActivityResult.Executed(detail: $"Replied to '{subject}'.");
+            var draftId = draft?.GetStringOrNull("id");
+            if (string.IsNullOrWhiteSpace(draftId))
+            {
+                return ActivityResult.Failed("Graph did not return a reply draft id.");
+            }
+
+            var internetMessageId = draft?.GetStringOrNull("internetMessageId");
+
+            try
+            {
+                await graph.PatchAsync(
+                    upn,
+                    $"users/{upn}/messages/{draftId}",
+                    new
+                    {
+                        body = new { contentType = "HTML", content = ExecutorHelpers.ToHtmlParagraphs(content.Body) }
+                    },
+                    cancellationToken).ConfigureAwait(false);
+
+                await graph.PostAsync(upn, $"users/{upn}/messages/{draftId}/send", new { }, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Never leave a half-written reply sitting in the user's Drafts folder.
+                await DiscardDraftAsync(upn, draftId, cancellationToken).ConfigureAwait(false);
+                throw;
+            }
+
+            var sentId = await ExecutorHelpers.ResolveSentMessageIdAsync(
+                graph, logger, upn, internetMessageId, cancellationToken).ConfigureAwait(false);
+
+            return ActivityResult.Executed(
+                sentId ?? draftId,
+                sentId is null ? null : $"users/{upn}/messages/{sentId}",
+                $"Replied to '{subject}'." +
+                (sentId is null ? " (sent copy not resolved, so it cannot be purged)" : string.Empty));
         }
         catch (UserNotEnrolledException ex)
         {
@@ -227,6 +228,24 @@ public sealed class ReplyMailExecutor(
         {
             logger.LogError(ex, "Failed to reply to mail for {IntentId}.", intent.Id);
             return ActivityResult.Failed(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Deletes an unsent reply draft, best effort. Cleanup must never mask the original failure.
+    /// </summary>
+    private async Task DiscardDraftAsync(string upn, string draftId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await graph.DeleteAsync(upn, $"users/{upn}/messages/{draftId}", cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                "Left an unsent reply draft {DraftId} in {Upn}'s mailbox: {Message}",
+                draftId, upn, ex.Message);
         }
     }
 }
@@ -302,6 +321,66 @@ public sealed class ReadMailExecutor(
 
 internal static partial class ExecutorHelpers
 {
+    /// <summary>
+    /// Finds the Sent Items copy of a message that has just been sent, by its internet message id.
+    /// <para>
+    /// Sending moves a message from Drafts to Sent Items and Exchange assigns it a <b>new</b> item
+    /// id, so the draft id is useless for purging. The internet message id is stable across the
+    /// move, so it is what links the two. Returns null when it cannot be resolved — the mail is
+    /// still sent, it just cannot be purged later.
+    /// </para>
+    /// </summary>
+    public static async Task<string?> ResolveSentMessageIdAsync(
+        IGraphClient graph,
+        ILogger logger,
+        string upn,
+        string? internetMessageId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(internetMessageId))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Exchange indexes the sent copy asynchronously, so a first miss is normal.
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var escaped = internetMessageId.Replace("'", "''", StringComparison.Ordinal);
+                var results = await graph.GetPagedAsync(
+                    upn,
+                    $"users/{upn}/mailFolders/sentitems/messages" +
+                    $"?$filter=internetMessageId eq '{Uri.EscapeDataString(escaped)}'&$select=id&$top=1",
+                    maxItems: 1,
+                    cancellationToken).ConfigureAwait(false);
+
+                var id = results.Count > 0 ? results[0].GetStringOrNull("id") : null;
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    return id;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(1 + attempt), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (GraphException ex)
+        {
+            logger.LogDebug("Could not resolve the sent copy for {Upn} ({Status}); it will not be purgeable.",
+                upn, ex.StatusCode);
+        }
+
+        return null;
+    }
+
+    public static string MarkerHeaderName(TenantPulseOptions options)
+    {
+        var configured = string.IsNullOrWhiteSpace(options.Simulation.MarkerHeaderName)
+            ? "X-TenantPulse"
+            : options.Simulation.MarkerHeaderName.Trim();
+        return configured.StartsWith("X-", StringComparison.OrdinalIgnoreCase) ? configured : $"X-{configured}";
+    }
+
     public static object ToRecipient(Persona persona) => new
     {
         emailAddress = new { address = persona.UserPrincipalName, name = persona.DisplayName }
