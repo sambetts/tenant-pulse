@@ -1,0 +1,435 @@
+[
+  {
+    "id": "contoso-rfp",
+    "title": "Northwind Traders RFP response",
+    "summary": "The company is bidding for a large managed-services contract with Northwind Traders. The response is due at the end of the month and needs pricing sign-off, a security questionnaire, and a final executive review before submission.",
+    "weight": 1.4,
+    "roles": [
+      { "name": "bidLead", "preferredArchetypes": ["Sales", "Manager"] },
+      { "name": "pricingAnalyst", "preferredArchetypes": ["Finance", "Analyst"] },
+      { "name": "solutionArchitect", "preferredArchetypes": ["Engineer", "Analyst"] },
+      { "name": "execSponsor", "preferredArchetypes": ["Executive"] }
+    ],
+    "beats": [
+      {
+        "id": "kickoff-mail",
+        "dayOffset": 0,
+        "kind": "SendMail",
+        "actorRole": "bidLead",
+        "targetRoles": ["pricingAnalyst", "solutionArchitect", "execSponsor"],
+        "topic": "Northwind Traders RFP — kickoff and deadlines",
+        "preferredHour": 9,
+        "hints": { "tone": "energetic but organised" }
+      },
+      {
+        "id": "kickoff-meeting",
+        "dayOffset": 0,
+        "kind": "CreateEvent",
+        "actorRole": "bidLead",
+        "targetRoles": ["pricingAnalyst", "solutionArchitect"],
+        "topic": "Northwind RFP kickoff",
+        "preferredHour": 11
+      },
+      {
+        "id": "arch-chat",
+        "dayOffset": 1,
+        "kind": "ChatMessage",
+        "actorRole": "solutionArchitect",
+        "targetRoles": ["bidLead"],
+        "topic": "questions on the Northwind technical requirements"
+      },
+      {
+        "id": "pricing-doc",
+        "dayOffset": 1,
+        "kind": "CreateDocument",
+        "actorRole": "pricingAnalyst",
+        "topic": "Northwind Traders — pricing model v1",
+        "hints": { "folder": "Bids/Northwind" }
+      },
+      {
+        "id": "channel-update",
+        "dayOffset": 2,
+        "kind": "ChannelPost",
+        "actorRole": "bidLead",
+        "topic": "Northwind RFP — where we are this week"
+      },
+      {
+        "id": "copilot-summarise",
+        "dayOffset": 2,
+        "kind": "CopilotPrompt",
+        "actorRole": "execSponsor",
+        "topic": "catch up on the Northwind RFP before the review"
+      },
+      {
+        "id": "pricing-review",
+        "dayOffset": 3,
+        "kind": "ReplyMail",
+        "actorRole": "pricingAnalyst",
+        "targetRoles": ["bidLead"],
+        "topic": "Northwind pricing — margin assumptions"
+      },
+      {
+        "id": "pricing-edit",
+        "dayOffset": 3,
+        "kind": "EditDocument",
+        "actorRole": "pricingAnalyst",
+        "topic": "Northwind Traders — pricing model v2"
+      },
+      {
+        "id": "security-questionnaire",
+        "dayOffset": 4,
+        "kind": "CreateDocument",
+        "actorRole": "solutionArchitect",
+        "topic": "Northwind security questionnaire responses",
+        "hints": { "folder": "Bids/Northwind" }
+      },
+      {
+        "id": "exec-review-meeting",
+        "dayOffset": 5,
+        "kind": "CreateEvent",
+        "actorRole": "execSponsor",
+        "targetRoles": ["bidLead", "pricingAnalyst"],
+        "topic": "Northwind RFP — final review",
+        "preferredHour": 14
+      },
+      {
+        "id": "exec-signoff",
+        "dayOffset": 6,
+        "kind": "SendMail",
+        "actorRole": "execSponsor",
+        "targetRoles": ["bidLead"],
+        "topic": "Northwind RFP — approved to submit",
+        "hints": { "tone": "brief and decisive" }
+      },
+      {
+        "id": "submitted",
+        "dayOffset": 6,
+        "kind": "ChannelPost",
+        "actorRole": "bidLead",
+        "topic": "Northwind RFP submitted — thanks all"
+      }
+    ]
+  },
+  {
+    "id": "product-launch",
+    "title": "Spring release launch",
+    "summary": "A new product release ships at the end of the quarter. Marketing needs launch messaging, engineering is closing out the last defects, and support needs a readiness plan before go-live.",
+    "weight": 1.2,
+    "roles": [
+      { "name": "productManager", "preferredArchetypes": ["Marketing", "Manager"] },
+      { "name": "engineeringLead", "preferredArchetypes": ["Engineer"] },
+      { "name": "marketingLead", "preferredArchetypes": ["Marketing"] },
+      { "name": "supportLead", "preferredArchetypes": ["Support", "Operations"] }
+    ],
+    "beats": [
+      {
+        "id": "launch-plan",
+        "dayOffset": 0,
+        "kind": "CreateDocument",
+        "actorRole": "productManager",
+        "topic": "Spring release — launch plan",
+        "hints": { "folder": "Launch" }
+      },
+      {
+        "id": "launch-mail",
+        "dayOffset": 0,
+        "kind": "SendMail",
+        "actorRole": "productManager",
+        "targetRoles": ["engineeringLead", "marketingLead", "supportLead"],
+        "topic": "Spring release — launch plan and owners",
+        "preferredHour": 10
+      },
+      {
+        "id": "eng-status",
+        "dayOffset": 1,
+        "kind": "ChannelPost",
+        "actorRole": "engineeringLead",
+        "topic": "Spring release — remaining defects and cut-off"
+      },
+      {
+        "id": "marketing-chat",
+        "dayOffset": 1,
+        "kind": "ChatMessage",
+        "actorRole": "marketingLead",
+        "targetRoles": ["productManager"],
+        "topic": "sign-off needed on the launch messaging"
+      },
+      {
+        "id": "copilot-draft",
+        "dayOffset": 2,
+        "kind": "CopilotPrompt",
+        "actorRole": "marketingLead",
+        "topic": "draft launch announcement from the launch plan"
+      },
+      {
+        "id": "readiness-doc",
+        "dayOffset": 2,
+        "kind": "CreateDocument",
+        "actorRole": "supportLead",
+        "topic": "Spring release — support readiness checklist",
+        "hints": { "folder": "Launch" }
+      },
+      {
+        "id": "go-nogo",
+        "dayOffset": 3,
+        "kind": "CreateEvent",
+        "actorRole": "productManager",
+        "targetRoles": ["engineeringLead", "marketingLead", "supportLead"],
+        "topic": "Spring release go / no-go",
+        "preferredHour": 15
+      },
+      {
+        "id": "reaction",
+        "dayOffset": 4,
+        "kind": "Reaction",
+        "actorRole": "supportLead",
+        "topic": "acknowledging the release update"
+      },
+      {
+        "id": "shipped",
+        "dayOffset": 4,
+        "kind": "ChannelPost",
+        "actorRole": "engineeringLead",
+        "topic": "Spring release is live 🎉"
+      }
+    ]
+  },
+  {
+    "id": "quarterly-close",
+    "title": "Quarterly financial close",
+    "summary": "Finance is closing the quarter. Departmental numbers need to be submitted, variances explained, and a board summary produced.",
+    "weight": 1.0,
+    "roles": [
+      { "name": "controller", "preferredArchetypes": ["Finance"] },
+      { "name": "analyst", "preferredArchetypes": ["Analyst", "Finance"] },
+      { "name": "departmentHead", "preferredArchetypes": ["Manager", "Executive"] }
+    ],
+    "beats": [
+      {
+        "id": "close-notice",
+        "dayOffset": 0,
+        "kind": "SendMail",
+        "actorRole": "controller",
+        "targetRoles": ["departmentHead", "analyst"],
+        "topic": "Quarter close — submission deadline and what we need",
+        "preferredHour": 9,
+        "hints": { "tone": "formal, deadline-driven" }
+      },
+      {
+        "id": "variance-doc",
+        "dayOffset": 1,
+        "kind": "CreateDocument",
+        "actorRole": "analyst",
+        "topic": "Q3 variance analysis",
+        "hints": { "folder": "Finance/Close" }
+      },
+      {
+        "id": "chase",
+        "dayOffset": 2,
+        "kind": "ChatMessage",
+        "actorRole": "controller",
+        "targetRoles": ["departmentHead"],
+        "topic": "chasing the outstanding departmental numbers"
+      },
+      {
+        "id": "copilot-variance",
+        "dayOffset": 2,
+        "kind": "CopilotPrompt",
+        "actorRole": "analyst",
+        "topic": "explain the biggest variances this quarter"
+      },
+      {
+        "id": "variance-edit",
+        "dayOffset": 3,
+        "kind": "EditDocument",
+        "actorRole": "analyst",
+        "topic": "Q3 variance analysis — updated with departmental commentary"
+      },
+      {
+        "id": "board-summary",
+        "dayOffset": 4,
+        "kind": "SendMail",
+        "actorRole": "controller",
+        "targetRoles": ["departmentHead"],
+        "topic": "Q3 close complete — board summary attached"
+      }
+    ]
+  },
+  {
+    "id": "office-move",
+    "title": "Office move and hybrid working refresh",
+    "summary": "The company is moving to a new floor and refreshing its hybrid working guidance. HR and Operations are coordinating logistics, desk allocation and comms to staff.",
+    "weight": 0.8,
+    "roles": [
+      { "name": "opsLead", "preferredArchetypes": ["Operations"] },
+      { "name": "hrLead", "preferredArchetypes": ["HumanResources"] },
+      { "name": "itLead", "preferredArchetypes": ["Engineer"] }
+    ],
+    "beats": [
+      {
+        "id": "announcement",
+        "dayOffset": 0,
+        "kind": "ChannelPost",
+        "actorRole": "hrLead",
+        "topic": "We're moving floors next month — what you need to know"
+      },
+      {
+        "id": "logistics-doc",
+        "dayOffset": 1,
+        "kind": "CreateDocument",
+        "actorRole": "opsLead",
+        "topic": "Office move — logistics and desk plan",
+        "hints": { "folder": "Facilities" }
+      },
+      {
+        "id": "it-chat",
+        "dayOffset": 1,
+        "kind": "ChatMessage",
+        "actorRole": "itLead",
+        "targetRoles": ["opsLead"],
+        "topic": "network and AV requirements for the new floor"
+      },
+      {
+        "id": "faq-mail",
+        "dayOffset": 2,
+        "kind": "SendMail",
+        "actorRole": "hrLead",
+        "targetRoles": ["opsLead", "itLead"],
+        "topic": "Move FAQ — questions coming in from the team"
+      },
+      {
+        "id": "walkthrough",
+        "dayOffset": 3,
+        "kind": "CreateEvent",
+        "actorRole": "opsLead",
+        "targetRoles": ["hrLead", "itLead"],
+        "topic": "New floor walkthrough",
+        "preferredHour": 13
+      }
+    ]
+  },
+  {
+    "id": "customer-escalation",
+    "title": "Fabrikam service escalation",
+    "summary": "A key customer, Fabrikam, has raised a formal escalation after a service incident. Support, engineering and the account team are working through root cause and a remediation plan.",
+    "weight": 1.1,
+    "roles": [
+      { "name": "accountManager", "preferredArchetypes": ["Sales", "Manager"] },
+      { "name": "supportEngineer", "preferredArchetypes": ["Support", "Engineer"] },
+      { "name": "engineeringLead", "preferredArchetypes": ["Engineer"] }
+    ],
+    "beats": [
+      {
+        "id": "escalation-mail",
+        "dayOffset": 0,
+        "kind": "SendMail",
+        "actorRole": "accountManager",
+        "targetRoles": ["supportEngineer", "engineeringLead"],
+        "topic": "Fabrikam escalation — we need a plan today",
+        "preferredHour": 8,
+        "hints": { "tone": "urgent but controlled" }
+      },
+      {
+        "id": "war-room",
+        "dayOffset": 0,
+        "kind": "ChatMessage",
+        "actorRole": "supportEngineer",
+        "targetRoles": ["engineeringLead"],
+        "topic": "pulling the incident timeline together"
+      },
+      {
+        "id": "rca-doc",
+        "dayOffset": 1,
+        "kind": "CreateDocument",
+        "actorRole": "engineeringLead",
+        "topic": "Fabrikam incident — root cause analysis",
+        "hints": { "folder": "Incidents" }
+      },
+      {
+        "id": "copilot-timeline",
+        "dayOffset": 1,
+        "kind": "CopilotPrompt",
+        "actorRole": "supportEngineer",
+        "topic": "pull together what happened during the Fabrikam incident"
+      },
+      {
+        "id": "customer-update",
+        "dayOffset": 2,
+        "kind": "SendMail",
+        "actorRole": "accountManager",
+        "targetRoles": ["engineeringLead"],
+        "topic": "Fabrikam — draft customer update for review"
+      },
+      {
+        "id": "review-call",
+        "dayOffset": 3,
+        "kind": "CreateEvent",
+        "actorRole": "accountManager",
+        "targetRoles": ["supportEngineer", "engineeringLead"],
+        "topic": "Fabrikam remediation review",
+        "preferredHour": 10
+      },
+      {
+        "id": "closed",
+        "dayOffset": 4,
+        "kind": "ChannelPost",
+        "actorRole": "supportEngineer",
+        "topic": "Fabrikam escalation closed — summary and follow-ups"
+      }
+    ]
+  },
+  {
+    "id": "onboarding",
+    "title": "New starter onboarding",
+    "summary": "A new colleague is joining. HR is running onboarding, IT is provisioning equipment and access, and their manager is planning their first-week schedule.",
+    "weight": 0.9,
+    "roles": [
+      { "name": "hrLead", "preferredArchetypes": ["HumanResources"] },
+      { "name": "hiringManager", "preferredArchetypes": ["Manager", "Executive"] },
+      { "name": "itLead", "preferredArchetypes": ["Engineer"] }
+    ],
+    "beats": [
+      {
+        "id": "starter-mail",
+        "dayOffset": 0,
+        "kind": "SendMail",
+        "actorRole": "hrLead",
+        "targetRoles": ["hiringManager", "itLead"],
+        "topic": "New starter next Monday — onboarding checklist",
+        "preferredHour": 9
+      },
+      {
+        "id": "it-provision",
+        "dayOffset": 1,
+        "kind": "ChatMessage",
+        "actorRole": "itLead",
+        "targetRoles": ["hrLead"],
+        "topic": "laptop and account provisioning is done"
+      },
+      {
+        "id": "first-week-doc",
+        "dayOffset": 1,
+        "kind": "CreateDocument",
+        "actorRole": "hiringManager",
+        "topic": "First week plan — new starter",
+        "hints": { "folder": "People" }
+      },
+      {
+        "id": "welcome-post",
+        "dayOffset": 3,
+        "kind": "ChannelPost",
+        "actorRole": "hrLead",
+        "topic": "Please welcome our new colleague joining this week"
+      },
+      {
+        "id": "intro-meeting",
+        "dayOffset": 3,
+        "kind": "CreateEvent",
+        "actorRole": "hiringManager",
+        "targetRoles": ["hrLead"],
+        "topic": "New starter intro and team welcome",
+        "preferredHour": 11
+      }
+    ]
+  }
+]

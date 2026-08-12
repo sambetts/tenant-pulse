@@ -1,0 +1,100 @@
+{
+  "//": [
+    "Copy this file to config/tenant-pulse.json and fill it in. That path is gitignored.",
+    "Secrets can also come from the environment instead of this file:",
+    "  TENANTPULSE_AOAI_KEY          Azure OpenAI API key",
+    "  TENANTPULSE_SHARED_PASSWORD   shared demo-user password (UsernamePassword auth mode only)"
+  ],
+
+  "TenantPulse": {
+    "Tenant": {
+      "//": "AllowedTenantIds is the safety guardrail. tenant-pulse refuses to run unless TenantId is listed here.",
+      "TenantId": "00000000-0000-0000-0000-000000000000",
+      "AllowedTenantIds": [
+        "00000000-0000-0000-0000-000000000000"
+      ],
+      "AllowedDomains": [
+        "M365x000000.onmicrosoft.com"
+      ],
+      "//ClientId": "Application (client) id of a PUBLIC CLIENT Entra app registration in the demo tenant.",
+      "ClientId": "00000000-0000-0000-0000-000000000000"
+    },
+
+    "Auth": {
+      "//Mode": "DeviceCode (supported, one interactive sign-in per user) or UsernamePassword (unattended, deprecated by Microsoft but usually fine in a demo tenant).",
+      "Mode": "DeviceCode",
+      "CacheDirectory": ".state/token-cache",
+      "//SharedPassword": "Only used when Mode=UsernamePassword. Prefer the TENANTPULSE_SHARED_PASSWORD environment variable.",
+      "SharedPassword": null,
+      "Passwords": {}
+    },
+
+    "Simulation": {
+      "Seed": 20260812,
+      "//DryRun": "true means nothing is written to the tenant. Pass --live on the command line to act.",
+      "DryRun": true,
+      "DefaultTimeZone": "Europe/London",
+      "ConcurrentStorylines": 3,
+      "IncludeAfterHours": true,
+      "JournalPath": ".state/journal.db",
+      "KillSwitchFile": ".state/STOP",
+      "MarkerHeaderName": "X-TenantPulse",
+      "MarkerValue": "simulated"
+    },
+
+    "Limits": {
+      "//": "Deliberately conservative. This is not a load test — it is a tenant that looks used.",
+      "MaxActivitiesPerUserPerDay": 14,
+      "MaxActivitiesPerTenantPerHour": 60,
+      "MinSecondsBetweenUserActivities": 90,
+      "MaxConcurrency": 4
+    },
+
+    "Content": {
+      "//Provider": "AzureOpenAI or Template.",
+      "Provider": "AzureOpenAI",
+      "Endpoint": "https://your-resource.openai.azure.com/",
+      "Deployment": "gpt-4o-mini",
+      "ApiKey": null,
+      "//CompanyName": "The fictional company the personas work for. Steers every generated email, chat and document.",
+      "CompanyName": "Contoso",
+      "CompanyIndustry": "professional services",
+      "FallbackToTemplates": true,
+      "MaxTokens": 700,
+      "Temperature": 0.9
+    },
+
+    "Copilot": {
+      "Enabled": true,
+      "//UseGraphChatApi": "Graph beta Copilot Chat API. Run 'tenant-pulse verify-copilot --live' to confirm prompts register as usage in your tenant.",
+      "UseGraphChatApi": true,
+      "PromptsPerUserPerDay": 3,
+      "//Agents": "Copilot Studio agents reachable over Direct Line. Get the secret from the agent's Web channel security settings.",
+      "Agents": [
+        {
+          "Name": "HR Assistant",
+          "DirectLineSecret": null,
+          "Endpoint": "https://directline.botframework.com",
+          "SamplePrompts": [
+            "How many days of annual leave do I have left?",
+            "What's the process for booking business travel?"
+          ]
+        }
+      ]
+    },
+
+    "Workloads": {
+      "Mail": true,
+      "Teams": true,
+      "Files": true,
+      "Calendar": true,
+      "Copilot": true,
+      "//Agents": "Off by default — needs a Copilot Studio agent and Direct Line secret above.",
+      "Agents": false,
+      "//SharePointSites": "Optional. Server-relative paths, e.g. /sites/Marketing. Empty means use each persona's OneDrive.",
+      "SharePointSites": [],
+      "//TeamNames": "Optional allow-list of teams to post into. Empty means any team the actor belongs to.",
+      "TeamNames": []
+    }
+  }
+}

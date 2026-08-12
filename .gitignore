@@ -1,0 +1,48 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+## NuGet
+*.nupkg
+packages/
+
+## Node (Playwright fallback driver, if used)
+node_modules/
+
+## ---------------------------------------------------------------
+## tenant-pulse secrets & state — NEVER commit these
+## ---------------------------------------------------------------
+
+# Live configuration containing tenant ids, client ids, endpoints, passwords
+config/tenant-pulse.json
+config/*.local.json
+config/passwords.json
+**/appsettings.Local.json
+
+# MSAL token caches (contain refresh tokens for every simulated user)
+.state/
+*.msalcache
+*.msalcache.*
+token-cache/
+
+# The activity journal (SQLite) — records everything the simulator created
+*.db
+*.db-shm
+*.db-wal
+
+# Playwright per-user browser sessions
+storage-state/
+*.storagestate.json
+
+# Local env files
+.env
+.env.*
+!.env.example

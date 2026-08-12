@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="TenantPulse.Cli/TenantPulse.Cli.csproj" />
+  <Project Path="TenantPulse.Core/TenantPulse.Core.csproj" />
+  <Project Path="TenantPulse.Engine/TenantPulse.Engine.csproj" />
+  <Project Path="TenantPulse.Tests/TenantPulse.Tests.csproj" />
+</Solution>
