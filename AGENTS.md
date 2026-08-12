@@ -84,9 +84,12 @@ per-user MSAL cache and an enrolment step. See `docs/auth.md`.
 Beta SDK is enormous, and it does not model the preview Copilot endpoints we need. Don't "modernise"
 this by adding the SDK.
 
-**The Copilot Chat API is preview and its usage-reporting behaviour is undocumented.** Do not write
-code or docs that assert prompts sent via `/beta/copilot/conversations` count as Copilot usage. The
-`verify-copilot` command exists to establish that empirically. Keep the uncertainty honest.
+**The Copilot Chat API is preview and its usage-reporting behaviour is only partly established.** A
+`verify-copilot` run against a CDX tenant (2026-08-12) did find its marker in the enterprise
+interaction store, so prompts sent via `/beta/copilot/conversations` are recorded there. That is not
+a licence to claim they appear in the admin centre's daily active-users report — a different,
+next-day surface. Keep that distinction in code and docs, and re-run `verify-copilot` per tenant
+rather than asserting the result.
 
 **ROPC is opt-in and deprecated.** `AuthMode.UsernamePassword` exists because it enrols 25 demo
 users unattended and demo tenants usually allow it. It is guarded by `#pragma warning disable CS0618`

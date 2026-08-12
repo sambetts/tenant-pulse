@@ -37,14 +37,33 @@ Facts:
 - Prompts are generated per-persona and reference that person's actual work (their storylines), so
   Copilot has genuine tenant content to ground its answer on.
 
-### The open question
+### The open question — answered, with a caveat
 
 **Microsoft does not document whether prompts sent through this API appear in the admin centre's
 Copilot usage reports.** The reports describe usage in Teams, Outlook, Word, Excel, PowerPoint,
 OneNote and the Copilot app. Whether an API-driven conversation is attributed the same way is simply
 not stated.
 
-So don't assume. Measure:
+It has now been measured. Against a CDX demo tenant on 2026-08-12, `verify-copilot` sent a marked
+prompt and **found the marker in the user's interaction history**, alongside four other
+interactions:
+
+```
+Prompt sent        yes
+Interactions read  5
+Marker found       YES
+```
+
+So API-driven prompts *are* written to the enterprise interaction store — the same store the
+compliance and usage surfaces read from. That is the strongest signal available in real time.
+
+Be careful about what it does not prove: the interaction export API and the admin centre's daily
+**active users** report are related but not identical surfaces, and the latter is a next-day
+aggregate. If a demo hinges on the usage report specifically, check it the following day rather than
+trusting this alone. Re-run the check on any new tenant — this is a preview API and the answer is
+allowed to change.
+
+Measure it yourself with:
 
 ```pwsh
 tenant-pulse verify-copilot --live --user <upn> --app-token <jwt>
@@ -56,10 +75,14 @@ back through the **Copilot Interaction Export API**
 That API is application-permission only (`AiEnterpriseInteraction.Read.All`), which is why you must
 supply an app-only token.
 
+The app registration is a public client with no secret, so minting that token means adding a client
+secret temporarily. Add it, take the token, and remove the secret again in the same sitting.
+
 ### What each outcome means
 
 **Marker found.** API-driven prompts are landing in the same interaction store the compliance and
-usage surfaces read from. Leave `Copilot.UseGraphChatApi = true` and you're done.
+usage surfaces read from — this is what the reference tenant returned. Leave
+`Copilot.UseGraphChatApi = true` and you're done.
 
 **Marker not found.** Either the export pipeline is lagging, or API prompts are not recorded.
 In order:

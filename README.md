@@ -171,15 +171,17 @@ Prompts are sent through the Graph **Copilot Chat API** (`/beta/copilot/conversa
 It is delegated-only and needs a Microsoft 365 Copilot licence per user. What Microsoft does *not*
 document is whether prompts sent this way are counted in the admin centre's Copilot usage reports.
 
-Rather than guess, tenant-pulse can find out:
+Rather than guess, tenant-pulse finds out:
 
 ```pwsh
 dotnet run --project src/TenantPulse.Cli -- verify-copilot --live --user <upn> --app-token <jwt>
 ```
 
 It sends a uniquely-marked prompt, waits, then reads that user's history back through the Copilot
-Interaction Export API looking for the marker. See [docs/copilot.md](docs/copilot.md) for what to do
-with each answer.
+Interaction Export API looking for the marker. On the reference CDX tenant the marker **was** found,
+so API prompts do reach the enterprise interaction store — but that is not quite the same surface as
+the admin centre's next-day active-users report, and this is a preview API. Re-run it per tenant.
+See [docs/copilot.md](docs/copilot.md) for what to do with each answer.
 
 Copilot Studio agents are driven over the Direct Line API, which is stable, documented and does show
 up in Copilot Studio analytics.
