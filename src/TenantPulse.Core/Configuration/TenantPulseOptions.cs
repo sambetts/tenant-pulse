@@ -79,11 +79,21 @@ public sealed class AuthOptions
     /// <summary>Per-user password overrides (UPN → password) for tenants that don't share one.</summary>
     public Dictionary<string, string> Passwords { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Delegated scopes requested for general activity.</summary>
+    /// <summary>
+    /// Delegated scopes requested for general activity.
+    /// <para>
+    /// The last block is required by the Graph Copilot Chat API, which grounds answers in the
+    /// user's own content and so demands read access to each source. It rejects a token that is
+    /// missing any of them with HTTP 403 listing the lot, even where a broader scope (for example
+    /// Mail.ReadWrite over Mail.Read) is already present — the literal scope has to be in the token.
+    /// </para>
+    /// </summary>
     public List<string> Scopes { get; set; } =
     [
         "User.Read",
         "User.ReadBasic.All",
+        "User.Read.All",
+        "Organization.Read.All",
         "Mail.ReadWrite",
         "Mail.Send",
         "Chat.ReadWrite",
@@ -93,7 +103,15 @@ public sealed class AuthOptions
         "Channel.ReadBasic.All",
         "Files.ReadWrite.All",
         "Sites.ReadWrite.All",
-        "Calendars.ReadWrite"
+        "Calendars.ReadWrite",
+
+        // Required by the Copilot Chat API.
+        "Mail.Read",
+        "Chat.Read",
+        "Sites.Read.All",
+        "People.Read.All",
+        "ExternalItem.Read.All",
+        "OnlineMeetingTranscript.Read.All"
     ];
 }
 

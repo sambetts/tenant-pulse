@@ -331,11 +331,16 @@ public sealed class ReactionExecutor(
     {
         var rng = ExecutorHelpers.RandomFor(context.Seed, intentId);
         var roll = rng.NextDouble();
+
+        // Graph wants the emoji itself: the old named reaction types ("like", "heart", "laugh") are
+        // now rejected with "Unicode 'like' in the payload is not supported".
         return roll switch
         {
-            < 0.65d => "like",
-            < 0.85d => "heart",
-            _ => "laugh"
+            < 0.55d => "\U0001F44D", // thumbs up
+            < 0.75d => "\u2764\uFE0F", // heart
+            < 0.88d => "\U0001F602", // tears of joy
+            < 0.96d => "\U0001F44F", // clapping
+            _ => "\U0001F389" // party popper
         };
     }
 

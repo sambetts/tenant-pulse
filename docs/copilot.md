@@ -11,7 +11,14 @@ tenant-pulse sends prompts through the Graph **Copilot Chat API**:
 
 ```
 POST /beta/copilot/conversations                        → { id }
-POST /beta/copilotConversations/{id}/chat               → { ...answer... }
+POST /beta/copilot/conversations/{id}/chat              → { messages: [ …, answer ] }
+```
+
+The chat call requires a `locationHint.timeZone` — without it the call is rejected with
+`400 badRequest`. tenant-pulse sends the acting persona's own time zone:
+
+```json
+{ "message": { "text": "…" }, "locationHint": { "timeZone": "Europe/London" } }
 ```
 
 Facts:
@@ -21,6 +28,12 @@ Facts:
 - Each calling user needs a **Microsoft 365 Copilot licence**. Without one, every call returns 403.
   The planner only schedules Copilot activity for users it can see a Copilot service plan on, so
   unlicensed users are skipped rather than failing.
+- It grounds answers in the user's own content, and so demands the **full set of read scopes** in
+  the token: `Mail.Read`, `Chat.Read`, `Sites.Read.All`, `People.Read.All`, `ChannelMessage.Read.All`,
+  `ExternalItem.Read.All` and `OnlineMeetingTranscript.Read.All`. A missing one gives 403 listing
+  them all — and a broader scope does not substitute, so `Mail.ReadWrite` alone will not do.
+- Copilot licences cannot be detected from `assignedPlans[].service`; that field never contains
+  "Copilot". Match the service plan **id** against the tenant's `subscribedSkus` instead.
 - Prompts are generated per-persona and reference that person's actual work (their storylines), so
   Copilot has genuine tenant content to ground its answer on.
 

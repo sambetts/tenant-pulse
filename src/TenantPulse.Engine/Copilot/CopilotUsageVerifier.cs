@@ -57,8 +57,12 @@ public sealed class CopilotUsageVerifier(
 
             await graph.PostAsync(
                 userPrincipalName,
-                $"copilotConversations/{conversationId}/chat",
-                new { message = new { text = prompt } },
+                $"copilot/conversations/{conversationId}/chat",
+                new
+                {
+                    message = new { text = prompt },
+                    locationHint = new { timeZone = "UTC" }
+                },
                 cancellationToken,
                 beta: true).ConfigureAwait(false);
         }

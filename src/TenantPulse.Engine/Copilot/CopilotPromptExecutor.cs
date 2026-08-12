@@ -82,8 +82,12 @@ public sealed class CopilotPromptExecutor(
 
             var reply = await graph.PostAsync(
                 upn,
-                $"copilotConversations/{conversationId}/chat",
-                new { message = new { text = prompt } },
+                $"copilot/conversations/{conversationId}/chat",
+                new
+                {
+                    message = new { text = prompt },
+                    locationHint = new { timeZone = intent.Actor.TimeZoneId }
+                },
                 cancellationToken,
                 beta: true).ConfigureAwait(false);
 

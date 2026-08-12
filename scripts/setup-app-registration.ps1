@@ -49,6 +49,8 @@ $GraphAppId = '00000003-0000-0000-c000-000000000000'
 $DelegatedScopes = @(
     'User.Read'
     'User.ReadBasic.All'
+    'User.Read.All'
+    'Organization.Read.All'
     'Mail.ReadWrite'
     'Mail.Send'
     'Chat.ReadWrite'
@@ -59,6 +61,15 @@ $DelegatedScopes = @(
     'Files.ReadWrite.All'
     'Sites.ReadWrite.All'
     'Calendars.ReadWrite'
+
+    # Required by the Copilot Chat API, which grounds answers in the user's own content. It rejects
+    # a token missing any of these with 403, even when a broader scope is already present.
+    'Mail.Read'
+    'Chat.Read'
+    'Sites.Read.All'
+    'People.Read.All'
+    'ExternalItem.Read.All'
+    'OnlineMeetingTranscript.Read.All'
 )
 
 function Assert-AzureCli {

@@ -34,7 +34,7 @@ public sealed class GraphPersonaDirectory(
         var users = await graph.GetPagedAsync(signedInUpn, path, maxItems: 500, cancellationToken)
             .ConfigureAwait(false);
 
-        var licensed = await LoadCopilotLicensedAsync(signedInUpn, cancellationToken).ConfigureAwait(false);
+        var licences = await LoadLicenceAssignmentsAsync(signedInUpn, cancellationToken).ConfigureAwait(false);
 
         var personas = new List<Persona>();
 
@@ -67,13 +67,21 @@ public sealed class GraphPersonaDirectory(
                 continue;
             }
 
+            // Room and equipment mailboxes, bots and other service accounts have a mailbox but no
+            // licence. They must not join the cast: a conference room does not send email, and an
+            // unlicensed account gets HTTP 403 from every workload endpoint anyway.
+            if (licences.Known && !licences.Licensed.Contains(id))
+            {
+                continue;
+            }
+
             var persona = BuildPersona(
                 id, upn, displayName,
                 user.GetStringOrNull("givenName"),
                 user.GetStringOrNull("jobTitle"),
                 user.GetStringOrNull("department"),
                 user.GetStringOrNull("officeLocation"),
-                hasCopilot: licensed.Contains(id));
+                hasCopilot: licences.Copilot.Contains(id));
 
             personas.Add(persona with { Excluded = ShouldExclude(persona) });
         }
@@ -88,19 +96,47 @@ public sealed class GraphPersonaDirectory(
     }
 
     /// <summary>
-    /// Object ids of users holding a Microsoft 365 Copilot licence. Copilot activity is only
-    /// planned for these users — an unlicensed user gets HTTP 403 from every Copilot endpoint.
+    /// Licence assignments, read once for the whole tenant.
     /// </summary>
-    private async Task<HashSet<string>> LoadCopilotLicensedAsync(
+    /// <param name="Known">
+    /// False when licences could not be read at all (the app registration predates the
+    /// User.Read.All/Organization.Read.All scopes). Callers must then fall back to including every
+    /// mailbox-bearing account rather than silently simulating nobody.
+    /// </param>
+    /// <param name="Licensed">Object ids of users holding at least one licence.</param>
+    /// <param name="Copilot">Object ids of users holding an enabled Microsoft 365 Copilot plan.</param>
+    private sealed record LicenceAssignments(
+        bool Known,
+        HashSet<string> Licensed,
+        HashSet<string> Copilot);
+
+    /// <summary>
+    /// Reads who is licensed, and who specifically holds Microsoft 365 Copilot.
+    /// <para>
+    /// Copilot cannot be detected from <c>assignedPlans[].service</c>: that field carries coarse
+    /// service names ("exchange", "TeamspaceAPI", "ccibotsprod") and never contains "Copilot", even
+    /// for a fully licensed user. The reliable signal is the service plan <em>id</em>, matched
+    /// against the Copilot service plans the tenant actually subscribes to.
+    /// </para>
+    /// </summary>
+    private async Task<LicenceAssignments> LoadLicenceAssignmentsAsync(
         string signedInUpn,
         CancellationToken cancellationToken)
     {
         var licensed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var copilot = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var copilotPlanIds = await LoadCopilotServicePlanIdsAsync(signedInUpn, cancellationToken)
+            .ConfigureAwait(false);
 
         try
         {
             var users = await graph
-                .GetPagedAsync(signedInUpn, "users?$select=id,assignedPlans&$top=200", 500, cancellationToken)
+                .GetPagedAsync(
+                    signedInUpn,
+                    "users?$select=id,assignedLicenses,assignedPlans&$top=200",
+                    500,
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             foreach (var user in users)
@@ -111,6 +147,13 @@ public sealed class GraphPersonaDirectory(
                     continue;
                 }
 
+                if (user.TryGetProperty("assignedLicenses", out var assigned) &&
+                    assigned.ValueKind == JsonValueKind.Array &&
+                    assigned.GetArrayLength() > 0)
+                {
+                    licensed.Add(id);
+                }
+
                 if (!user.TryGetProperty("assignedPlans", out var plans) || plans.ValueKind != JsonValueKind.Array)
                 {
                     continue;
@@ -118,19 +161,71 @@ public sealed class GraphPersonaDirectory(
 
                 foreach (var plan in plans.EnumerateArray())
                 {
-                    var service = plan.GetStringOrNull("service");
-                    var status = plan.GetStringOrNull("capabilityStatus");
-
-                    if (!string.Equals(status, "Enabled", StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(
+                            plan.GetStringOrNull("capabilityStatus"),
+                            "Enabled",
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
-                    if (service is not null &&
-                        service.Contains("Copilot", StringComparison.OrdinalIgnoreCase))
+                    var planId = plan.GetStringOrNull("servicePlanId");
+
+                    if (planId is not null && copilotPlanIds.Contains(planId))
                     {
-                        licensed.Add(id);
+                        copilot.Add(id);
                         break;
+                    }
+                }
+            }
+
+            return new LicenceAssignments(Known: true, licensed, copilot);
+        }
+        catch (GraphException ex)
+        {
+            logger.LogWarning(
+                "Could not read licence assignments ({Status}): {Message}. Every mailbox will be " +
+                "treated as a person and no Copilot activity will be planned. Re-run " +
+                "scripts/setup-app-registration.ps1 to grant User.Read.All and Organization.Read.All.",
+                ex.StatusCode, ex.Message);
+
+            return new LicenceAssignments(Known: false, licensed, copilot);
+        }
+    }
+
+    /// <summary>
+    /// Service plan ids belonging to the tenant's Microsoft 365 Copilot subscriptions.
+    /// </summary>
+    private async Task<HashSet<string>> LoadCopilotServicePlanIdsAsync(
+        string signedInUpn,
+        CancellationToken cancellationToken)
+    {
+        var planIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var skus = await graph
+                .GetPagedAsync(signedInUpn, "subscribedSkus", 200, cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var sku in skus)
+            {
+                if (!sku.TryGetProperty("servicePlans", out var servicePlans) ||
+                    servicePlans.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var servicePlan in servicePlans.EnumerateArray())
+                {
+                    var name = servicePlan.GetStringOrNull("servicePlanName");
+                    var id = servicePlan.GetStringOrNull("servicePlanId");
+
+                    if (id is not null &&
+                        name is not null &&
+                        name.Contains("COPILOT", StringComparison.OrdinalIgnoreCase))
+                    {
+                        planIds.Add(id);
                     }
                 }
             }
@@ -138,11 +233,11 @@ public sealed class GraphPersonaDirectory(
         catch (GraphException ex)
         {
             logger.LogWarning(
-                "Could not read licence assignments ({Status}); assuming no Copilot licences. {Message}",
+                "Could not read subscribed SKUs ({Status}); assuming no Copilot licences. {Message}",
                 ex.StatusCode, ex.Message);
         }
 
-        return licensed;
+        return planIds;
     }
 
     private bool ShouldExclude(Persona persona)
