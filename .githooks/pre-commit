@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# tenant-pulse pre-commit hook.
+#
+# Refuses commits that contain tenant configuration, credentials or demo-tenant PII.
+# Enable it with:  ./scripts/install-git-hooks.ps1
+#
+# Bypass in a genuine emergency with --no-verify, but understand that .gitignore is the only
+# thing left standing if you do.
+
+repo_root=$(git rev-parse --show-toplevel)
+checker="$repo_root/scripts/check-secrets.ps1"
+
+if [ ! -f "$checker" ]; then
+    echo "pre-commit: $checker not found; skipping secret scan." >&2
+    exit 0
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+    shell=pwsh
+elif command -v powershell >/dev/null 2>&1; then
+    shell=powershell
+else
+    echo "pre-commit: no PowerShell found; cannot run the secret scan." >&2
+    echo "pre-commit: install PowerShell or commit with --no-verify at your own risk." >&2
+    exit 1
+fi
+
+"$shell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$checker" -Staged
+exit $?

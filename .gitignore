@@ -27,6 +27,16 @@ config/*.local.json
 config/passwords.json
 **/appsettings.Local.json
 
+# Certificates and keys, if app-only auth is ever used
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+
+# Logs — they record UPNs, mail subjects and Copilot prompts from a real tenant
+*.log
+
 # MSAL token caches (contain refresh tokens for every simulated user)
 .state/
 *.msalcache
