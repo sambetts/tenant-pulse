@@ -64,15 +64,27 @@ public sealed class SendMailExecutor(
                 return ActivityResult.Failed("Graph did not return a draft message id.");
             }
 
+            // internetMessageId survives the send; the item id does not (see below).
+            var internetMessageId = draft?.GetStringOrNull("internetMessageId");
+
             // Graph does not accept custom internetMessageHeaders on sendMail; create-then-send preserves the marker.
             await graph.PostAsync(upn, $"users/{upn}/messages/{messageId}/send", new { }, cancellationToken)
                 .ConfigureAwait(false);
 
-            logger.LogInformation("Sent simulated mail {MessageId} as {UserPrincipalName}.", messageId, upn);
+            // Sending moves the message from Drafts to Sent Items and Exchange assigns it a NEW id,
+            // so the draft id is useless for purging. Resolve the sent copy by its internet message
+            // id, which is stable across the move.
+            var sentId = await ResolveSentMessageIdAsync(upn, internetMessageId, cancellationToken)
+                .ConfigureAwait(false);
+
+            logger.LogInformation("Sent simulated mail {MessageId} as {UserPrincipalName}.",
+                sentId ?? messageId, upn);
+
             return ActivityResult.Executed(
-                messageId,
-                $"users/{upn}/messages/{messageId}",
-                $"Sent '{subject}' to {intent.Targets.Count} recipient(s).");
+                sentId ?? messageId,
+                sentId is null ? null : $"users/{upn}/messages/{sentId}",
+                $"Sent '{subject}' to {intent.Targets.Count} recipient(s)." +
+                (sentId is null ? " (sent copy not resolved, so it cannot be purged)" : string.Empty));
         }
         catch (UserNotEnrolledException ex)
         {
@@ -87,6 +99,52 @@ public sealed class SendMailExecutor(
             logger.LogError(ex, "Failed to send mail for {IntentId}.", intent.Id);
             return ActivityResult.Failed(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Finds the Sent Items copy of a message that has just been sent, by its internet message id.
+    /// Returns null when it can't be resolved — in which case the mail is still sent, it just can't
+    /// be purged later.
+    /// </summary>
+    private async Task<string?> ResolveSentMessageIdAsync(
+        string upn,
+        string? internetMessageId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(internetMessageId))
+        {
+            return null;
+        }
+
+        try
+        {
+            // Exchange indexes the sent copy asynchronously, so a first miss is normal.
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var escaped = internetMessageId.Replace("'", "''", StringComparison.Ordinal);
+                var results = await graph.GetPagedAsync(
+                    upn,
+                    $"users/{upn}/mailFolders/sentitems/messages" +
+                    $"?$filter=internetMessageId eq '{Uri.EscapeDataString(escaped)}'&$select=id&$top=1",
+                    maxItems: 1,
+                    cancellationToken).ConfigureAwait(false);
+
+                var id = results.Count > 0 ? results[0].GetStringOrNull("id") : null;
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    return id;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(1 + attempt), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (GraphException ex)
+        {
+            logger.LogDebug("Could not resolve the sent copy for {Upn} ({Status}); it will not be purgeable.",
+                upn, ex.StatusCode);
+        }
+
+        return null;
     }
 
     private static string MarkerHeaderName(TenantPulseOptions options)

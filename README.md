@@ -76,18 +76,30 @@ sample content. Nothing is contacted.
 
 - .NET 10 SDK
 - A CDX demo tenant you are allowed to write to
-- An Entra **public client** app registration in that tenant, with the delegated Graph scopes listed
-  in `Auth.Scopes` (admin-consented)
+- Admin access to that tenant (to register an app and grant consent)
 - Optionally, an Azure OpenAI deployment for content generation
 
 ### 2. Configure
+
+The fiddliest part is the Entra app registration, so there's a script for it. Sign in to the **demo**
+tenant and run:
+
+```pwsh
+az login --allow-no-subscriptions --tenant <demo-tenant-id>
+./scripts/setup-app-registration.ps1 -TenantId <demo-tenant-id> -IncludeCopilotExport
+```
+
+That creates a public-client app with the right delegated Graph scopes, grants admin consent, and
+writes a starter `config/tenant-pulse.json` with the tenant already on the allow-list.
+
+Prefer to do it by hand? Copy the example and fill it in:
 
 ```pwsh
 Copy-Item config/tenant-pulse.example.json config/tenant-pulse.json
 ```
 
-Fill in the tenant id, client id, and **add the tenant id to `AllowedTenantIds`** — it will refuse to
-run otherwise. Keep secrets out of the file if you prefer:
+Either way, **the tenant id must appear in `AllowedTenantIds`** — it will refuse to run otherwise.
+Keep secrets out of the file if you prefer:
 
 ```pwsh
 $env:TENANTPULSE_AOAI_KEY = "<azure-openai-key>"

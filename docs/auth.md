@@ -78,7 +78,9 @@ tenant-pulse never stores a password: it exchanges it for a refresh token and ca
 
 ## The app registration
 
-Register a **public client** application in the demo tenant:
+The quickest route is `./scripts/setup-app-registration.ps1 -TenantId <id> -IncludeCopilotExport`,
+which does everything below and writes a starter config. To do it by hand, register a **public
+client** application in the demo tenant:
 
 - Authentication → Advanced settings → **Allow public client flows: Yes**
   (required for both device code and ROPC)
