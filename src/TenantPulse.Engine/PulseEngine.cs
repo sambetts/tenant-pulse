@@ -71,53 +71,77 @@ public sealed class PulseEngine(
         DateOnly? plannedDate = null;
         var queue = new Queue<ActivityIntent>();
 
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            if (governor.IsStopRequested())
+            while (!cancellationToken.IsCancellationRequested)
             {
-                logger.LogWarning("Kill switch present — stopping. Delete {File} to resume.",
-                    options.Simulation.KillSwitchFile);
-                return;
-            }
-
-            var today = DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
-
-            if (plannedDate != today)
-            {
-                var plan = PlanDay(today, personas, catalogue);
-                queue = new Queue<ActivityIntent>(plan.Where(i => i.ScheduledUtc >= clock.UtcNow.AddMinutes(-5)));
-                plannedDate = today;
-
-                var alreadyPast = plan.Count - queue.Count;
-                if (alreadyPast > 0)
+                if (governor.IsStopRequested())
                 {
-                    logger.LogInformation(
-                        "Skipping {Count} activities already in the past for today.", alreadyPast);
+                    logger.LogWarning("Kill switch present — stopping. Delete {File} to resume.",
+                        options.Simulation.KillSwitchFile);
+                    return;
                 }
+
+                var today = DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
+
+                if (plannedDate != today)
+                {
+                    var plan = PlanDay(today, personas, catalogue);
+                    queue = new Queue<ActivityIntent>(plan.Where(i => i.ScheduledUtc >= clock.UtcNow.AddMinutes(-5)));
+                    plannedDate = today;
+
+                    var alreadyPast = plan.Count - queue.Count;
+                    if (alreadyPast > 0)
+                    {
+                        logger.LogInformation(
+                            "Skipping {Count} activities already in the past for today.", alreadyPast);
+                    }
+                }
+
+                if (queue.Count == 0)
+                {
+                    // Nothing left today — idle until just after midnight UTC, then re-plan.
+                    var nextMidnight = today.AddDays(1).ToDateTime(TimeOnly.MinValue);
+                    var wait = new DateTimeOffset(nextMidnight, TimeSpan.Zero) - clock.UtcNow;
+                    await DelayAsync(wait, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var next = queue.Peek();
+                var untilDue = next.ScheduledUtc - clock.UtcNow;
+
+                if (untilDue > TimeSpan.Zero)
+                {
+                    // Wake at most every minute so the kill switch is honoured promptly.
+                    await DelayAsync(untilDue > TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : untilDue,
+                        cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                queue.Dequeue();
+                await ExecuteAsync(next, context, cancellationToken).ConfigureAwait(false);
+
+                // Debounced internally; only does anything when a durable copy is configured.
+                // A file share hiccup must never end a run that is meant to last for days.
+                await SnapshotQuietlyAsync(force: false).ConfigureAwait(false);
             }
+        }
+        finally
+        {
+            // The tenant must stay cleanable even if this process is about to disappear.
+            await SnapshotQuietlyAsync(force: true).ConfigureAwait(false);
+        }
+    }
 
-            if (queue.Count == 0)
-            {
-                // Nothing left today — idle until just after midnight UTC, then re-plan.
-                var nextMidnight = today.AddDays(1).ToDateTime(TimeOnly.MinValue);
-                var wait = new DateTimeOffset(nextMidnight, TimeSpan.Zero) - clock.UtcNow;
-                await DelayAsync(wait, cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            var next = queue.Peek();
-            var untilDue = next.ScheduledUtc - clock.UtcNow;
-
-            if (untilDue > TimeSpan.Zero)
-            {
-                // Wake at most every minute so the kill switch is honoured promptly.
-                await DelayAsync(untilDue > TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : untilDue,
-                    cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            queue.Dequeue();
-            await ExecuteAsync(next, context, cancellationToken).ConfigureAwait(false);
+    private async Task SnapshotQuietlyAsync(bool force)
+    {
+        try
+        {
+            await journal.SnapshotAsync(CancellationToken.None, force).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not write the journal snapshot; purge history may be stale.");
         }
     }
 

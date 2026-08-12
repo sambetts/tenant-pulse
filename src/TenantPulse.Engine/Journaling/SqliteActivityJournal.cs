@@ -13,6 +13,8 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
 {
     private readonly string _connectionString = BuildConnectionString(options.Simulation.JournalPath);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly SemaphoreSlim _snapshotGate = new(1, 1);
+    private DateTimeOffset _lastSnapshot = DateTimeOffset.MinValue;
 
     private static string BuildConnectionString(string path)
     {
@@ -27,12 +29,23 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
         {
             DataSource = fullPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared
+
+            // Private, not Shared. Shared-cache locking fails on a network filesystem, and the
+            // journal is single-writer anyway: writes are serialised by _writeGate, and the
+            // simulator is deliberately capped at one replica.
+            Cache = SqliteCacheMode.Private,
+
+            // A pooled connection keeps the file handle — and its locks — open after use. At a few
+            // small writes a minute there is nothing to gain from pooling, and releasing the file
+            // promptly is what makes the database safe to snapshot and replace.
+            Pooling = false
         }.ToString();
     }
 
     public async Task InitialiseAsync(CancellationToken cancellationToken)
     {
+        RestoreFromSnapshot();
+
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
 
         await ExecuteAsync(connection, """
@@ -279,10 +292,117 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
         return entries;
     }
 
+    /// <summary>
+    /// Brings back the durable copy when the working journal is missing — which is every cold start
+    /// in a container, because the working copy lives on disposable local disk.
+    /// </summary>
+    private void RestoreFromSnapshot()
+    {
+        var snapshot = options.Simulation.JournalSnapshotPath;
+        if (string.IsNullOrWhiteSpace(snapshot))
+        {
+            return;
+        }
+
+        var working = Path.GetFullPath(options.Simulation.JournalPath);
+        var durable = Path.GetFullPath(snapshot);
+
+        if (string.Equals(working, durable, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (File.Exists(working) || !File.Exists(durable))
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(working);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        File.Copy(durable, working, overwrite: false);
+    }
+
+    /// <inheritdoc />
+    public async Task SnapshotAsync(CancellationToken cancellationToken, bool force = false)
+    {
+        var snapshot = options.Simulation.JournalSnapshotPath;
+        if (string.IsNullOrWhiteSpace(snapshot))
+        {
+            return;
+        }
+
+        var working = Path.GetFullPath(options.Simulation.JournalPath);
+        var durable = Path.GetFullPath(snapshot);
+
+        if (string.Equals(working, durable, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        await _snapshotGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var interval = TimeSpan.FromSeconds(Math.Max(1, options.Simulation.JournalSnapshotIntervalSeconds));
+            if (!force && DateTimeOffset.UtcNow - _lastSnapshot < interval)
+            {
+                return;
+            }
+
+            var durableDirectory = Path.GetDirectoryName(durable);
+            if (!string.IsNullOrWhiteSpace(durableDirectory))
+            {
+                Directory.CreateDirectory(durableDirectory);
+            }
+
+            // Stage beside the working database, never on the durable target. VACUUM INTO produces
+            // a consistent copy of a live database, but it is still SQLite doing the writing, so it
+            // needs a filesystem SQLite can lock — which an SMB share is not.
+            var staging = working + ".snapshot";
+            if (File.Exists(staging))
+            {
+                File.Delete(staging);
+            }
+
+            await using (var connection = await OpenAsync(cancellationToken).ConfigureAwait(false))
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "VACUUM INTO $target;";
+                command.Parameters.AddWithValue("$target", staging);
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            // A plain stream copy, which SMB handles fine. Copy rather than move: the two paths are
+            // usually on different filesystems.
+            File.Copy(staging, durable, overwrite: true);
+            File.Delete(staging);
+
+            _lastSnapshot = DateTimeOffset.UtcNow;
+        }
+        finally
+        {
+            _snapshotGate.Release();
+        }
+    }
+
     private async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
     {
         var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        // The journal often lives on network storage — an Azure Files share when the simulator runs
+        // in Container Apps, which is how it survives a restart and keeps purge possible.
+        //
+        // SMB cannot support the memory-mapped locking WAL needs, and SQLite reports the failure as
+        // the famously unhelpful "database is locked". A rollback journal works over SMB, and a
+        // busy timeout absorbs the slower lock handovers. Costs nothing locally: this journal takes
+        // a handful of small writes per minute.
+        await ExecuteAsync(connection, "PRAGMA journal_mode=DELETE;", cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(connection, "PRAGMA busy_timeout=15000;", cancellationToken).ConfigureAwait(false);
+
         return connection;
     }
 

@@ -139,6 +139,21 @@ public sealed class SimulationOptions
     public string JournalPath { get; set; } = ".state/journal.db";
 
     /// <summary>
+    /// Optional durable copy of the journal. When set, the journal is restored from here at startup
+    /// and snapshotted back to it as activity is recorded.
+    /// <para>
+    /// This exists for container hosting. SQLite cannot run on an SMB file share — the byte-range
+    /// locking it needs is unsupported and every statement fails with "database is locked" — so the
+    /// live journal goes on fast local disk and the durable copy on the mounted share. Without it,
+    /// a restart would lose the purge paths and the tenant could never be cleaned up.
+    /// </para>
+    /// </summary>
+    public string? JournalSnapshotPath { get; set; }
+
+    /// <summary>Minimum seconds between journal snapshots. Snapshots on shutdown ignore this.</summary>
+    public int JournalSnapshotIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
     /// Presence of this file stops the simulator at the next check. Deleting it resumes.
     /// </summary>
     public string KillSwitchFile { get; set; } = ".state/STOP";

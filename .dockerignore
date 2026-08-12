@@ -1,0 +1,23 @@
+# Keep the build context small and make it impossible to bake tenant state or secrets into a layer.
+**/bin/
+**/obj/
+.git/
+.githooks/
+.vs/
+.vscode/
+.idea/
+
+# Never copy live configuration, token caches or the journal into the image.
+.state/
+config/tenant-pulse.json
+config/*.local.json
+config/passwords.json
+*.msalcache
+*.db
+*.log
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+*.key

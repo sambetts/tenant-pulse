@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     .gitignore is opt-out: it protects the files we thought of, and only while they keep their
-    expected names. This is the belt to that pair of braces. It scans content — by default what is
-    actually staged for commit — for the things that must never be committed from this repository:
+    expected names. This is the belt to that pair of braces. It scans content - by default what is
+    actually staged for commit - for the things that must never be committed from this repository:
 
       * access tokens, refresh tokens, JWTs and private keys
       * Azure OpenAI keys, shared demo passwords, Direct Line and client secrets
@@ -83,7 +83,7 @@ $Rules = @(
         Allow   = @('=\s*[''"]?<', '\$env:', '\$\(', '=\$')
     }
     @{
-        # A literal string assigned to a password-ish name: password='…', "pwd": "…", pwd = "…".
+        # A literal string assigned to a password-ish name: password='...', "pwd": "...", pwd = "...".
         # Deliberately requires quotes, so code like `var password = Resolve(upn)` is not a hit.
         Name    = 'Password assigned a literal value'
         Pattern = '\b(client_secret|clientSecret|password|passwd|pwd|SharedPassword)\b\s*[:=]\s*[''"][^''"<$]{8,}[''"]'
@@ -162,7 +162,7 @@ foreach ($file in $targets) {
             if ($allowed) { continue }
 
             $snippet = $line.Trim()
-            if ($snippet.Length -gt 100) { $snippet = $snippet.Substring(0, 100) + '…' }
+            if ($snippet.Length -gt 100) { $snippet = $snippet.Substring(0, 100) + '...' }
 
             $findings += [pscustomobject]@{
                 File = $file; Line = $n; Rule = $rule.Name; Text = $snippet

@@ -69,4 +69,16 @@ public interface IActivityJournal
 
     /// <summary>True when this intent has already been executed (makes replays idempotent).</summary>
     Task<bool> HasExecutedAsync(string intentId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Copies the journal to its configured durable location, if one is set.
+    /// <para>
+    /// Exists because SQLite cannot run directly on an SMB file share — the byte-range locking it
+    /// needs is unsupported, and every statement fails with "database is locked". So in a container
+    /// the live journal sits on fast local disk and is snapshotted onto the mounted share, which is
+    /// what keeps <c>purge</c> able to clean up after a restart.
+    /// </para>
+    /// </summary>
+    /// <param name="force">Ignore the debounce interval. Used on shutdown.</param>
+    Task SnapshotAsync(CancellationToken cancellationToken, bool force = false);
 }

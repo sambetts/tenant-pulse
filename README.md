@@ -144,6 +144,38 @@ dotnet run --project src/TenantPulse.Cli -- once --count 3 --live   # prove it e
 dotnet run --project src/TenantPulse.Cli -- run --live              # leave it running
 ```
 
+### 7. Optional: run it in Azure instead of on your machine
+
+`run` keeps going by itself — it rolls over at midnight UTC and plans the next day — so "daily
+activity" really just means keeping the process alive. Leaving that to a laptop means the tenant
+goes quiet whenever the laptop does.
+
+```pwsh
+./scripts/deploy-azure.ps1 `
+    -TenantId <demo-tenant-id> `
+    -ClientId <app-client-id> `
+    -Domain M365x000000.onmicrosoft.com `
+    -DirectoryReader someone@M365x000000.onmicrosoft.com `
+    -OpenAiEndpoint https://<your-resource>.openai.azure.com/
+```
+
+That builds the image in Azure (no local Docker), then deploys it to Container Apps on a single
+always-on replica. Roughly £10–15/month.
+
+A few things worth knowing:
+
+| | |
+| --- | --- |
+| **No secrets in the image** | The Azure OpenAI key and shared password are Container Apps secrets, injected at run time. |
+| **It enrols itself** | There is no token cache to copy up. With `Auth.Mode=UsernamePassword` the container signs each user in on demand, so it recovers from a cold start on its own. |
+| **One replica, always** | The simulator is single-writer. Two replicas would double-post into the tenant. |
+| **Journal is split** | SQLite cannot run on an SMB file share, so the live journal sits on container-local disk and is snapshotted to the mounted share. That snapshot is what keeps `purge` able to clean up after a restart. |
+| **Token caches are unencrypted there** | No DPAPI or keyring exists in a container, so MSAL falls back to plain files on the share. They hold refresh tokens — keep the share private. |
+| **Kill switch** | Upload a file named `STOP` to the file share; the simulator stops within a minute. |
+
+To clean the tenant up afterwards, download `journal.db` from the share and run `purge --live`
+against it locally.
+
 ---
 
 ## Commands
@@ -221,6 +253,7 @@ up in Copilot Studio analytics.
 | `TenantPulse.Engine` | Everything that talks to something: Graph, MSAL, Azure OpenAI, SQLite. |
 | `TenantPulse.Cli` | The `tenant-pulse` command. |
 | `TenantPulse.Tests` | Unit tests (xUnit v3, NSubstitute, AwesomeAssertions). |
+| `Dockerfile` | Container image for running the simulator in Azure. Carries no configuration or secrets. |
 
 Storylines are **data**, not code — add your own to `config/storylines.json` to give a tenant an
 industry-appropriate narrative without touching the build.

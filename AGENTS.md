@@ -132,6 +132,20 @@ Things it does deliberately, which you should not undo:
 
 ## Gotchas already paid for
 
+- **SQLite cannot run on an Azure Files SMB share.** The byte-range locking it needs is unsupported,
+  and every statement fails with `SQLite Error 5: 'database is locked'`. Container Apps gives no
+  control over mount options, so `nobrl` is not available either. Hence
+  `Simulation.JournalSnapshotPath`: the live journal runs on container-local disk and is copied to
+  the share with `VACUUM INTO` (staged locally, then a plain file copy — SMB handles streams fine,
+  just not locks). Without that snapshot a restart would lose every purge path.
+- **No DPAPI or keyring exists in a container**, so `TokenCacheStore` falls back to an unencrypted
+  MSAL cache. It still holds refresh tokens for every user — the volume must stay private.
+- **`run` needs a directory reader to start.** With an empty cache there is no enrolled user, so the
+  container passes `--as <upn>`; ROPC then enrols everyone lazily. Without it the container
+  crash-loops on "No enrolled user is available to read the directory".
+- **Repository PowerShell scripts must be ASCII-only.** They have no BOM, so Windows PowerShell 5.1
+  reads them as ANSI and an em dash becomes a parse error. Scheduled tasks and hooks hit this even
+  when PowerShell 7 runs them fine interactively.
 - **A misconfigured Azure OpenAI must not break read-only commands.** `AddContentGeneration` in
   `ServiceRegistration.cs` try-constructs the Azure generator and silently falls back to templates.
   Before that, `plan` and `doctor` crashed with a DI resolution error when no endpoint was set.

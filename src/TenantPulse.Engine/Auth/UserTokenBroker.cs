@@ -206,7 +206,7 @@ public sealed class UserTokenBroker : IUserTokenProvider
                 .Build();
 
             var cacheFile = CacheFileFor(userPrincipalName);
-            await TokenCacheStore.AttachAsync(app.UserTokenCache, cacheFile).ConfigureAwait(false);
+            await TokenCacheStore.AttachAsync(app.UserTokenCache, cacheFile, _logger).ConfigureAwait(false);
 
             _apps[userPrincipalName] = app;
             return app;
