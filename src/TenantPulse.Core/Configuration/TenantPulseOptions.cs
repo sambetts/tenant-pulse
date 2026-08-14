@@ -154,6 +154,16 @@ public sealed class SimulationOptions
     public int JournalSnapshotIntervalSeconds { get; set; } = 60;
 
     /// <summary>
+    /// When configured, the journal is kept in Azure Table Storage instead of SQLite.
+    /// <para>
+    /// This is what makes a hosted run observable: a table can be read from anywhere, so
+    /// <c>report</c> and <c>purge</c> work from a laptop against a simulator running in Azure,
+    /// rather than only from wherever the database file happens to sit.
+    /// </para>
+    /// </summary>
+    public JournalTableOptions JournalTable { get; set; } = new();
+
+    /// <summary>
     /// Presence of this file stops the simulator at the next check. Deleting it resumes.
     /// </summary>
     public string KillSwitchFile { get; set; } = ".state/STOP";
@@ -164,6 +174,28 @@ public sealed class SimulationOptions
     public string MarkerHeaderName { get; set; } = "X-TenantPulse";
 
     public string MarkerValue { get; set; } = "simulated";
+}
+
+public sealed class JournalTableOptions
+{
+    /// <summary>
+    /// Storage connection string. Covers the emulator — <c>UseDevelopmentStorage=true</c> — and
+    /// local runs. Prefer <see cref="Endpoint"/> in Azure: shared-key access to storage is commonly
+    /// disabled by policy.
+    /// </summary>
+    public string? ConnectionString { get; set; }
+
+    /// <summary>
+    /// Table endpoint, for example <c>https://mystorage.table.core.windows.net</c>. Authenticated
+    /// with Entra: the managed identity when hosted, whoever is signed in to the Azure CLI locally.
+    /// </summary>
+    public string? Endpoint { get; set; }
+
+    public string TableName { get; set; } = "TenantPulseJournal";
+
+    /// <summary>True when enough has been configured to use a table at all.</summary>
+    public bool IsConfigured =>
+        !string.IsNullOrWhiteSpace(ConnectionString) || !string.IsNullOrWhiteSpace(Endpoint);
 }
 
 public sealed class LimitsOptions

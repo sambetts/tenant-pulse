@@ -87,14 +87,14 @@ internal sealed class PurgeCommand(
                         .ConfigureAwait(false);
                 }
 
-                await journal.MarkPurgedAsync(entry.RowId, cancellationToken).ConfigureAwait(false);
+                await journal.MarkPurgedAsync(entry, cancellationToken).ConfigureAwait(false);
                 deleted++;
                 Logger.LogDebug("Purged {Path}", entry.PurgePath);
             }
             catch (GraphException ex) when (ex.IsNotFound)
             {
                 // Already gone — count it as done so it stops being reported.
-                await journal.MarkPurgedAsync(entry.RowId, cancellationToken).ConfigureAwait(false);
+                await journal.MarkPurgedAsync(entry, cancellationToken).ConfigureAwait(false);
                 deleted++;
             }
             catch (Exception ex)

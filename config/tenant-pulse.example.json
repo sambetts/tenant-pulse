@@ -37,6 +37,18 @@
       "ConcurrentStorylines": 3,
       "IncludeAfterHours": true,
       "JournalPath": ".state/journal.db",
+      "//JournalTable": [
+        "Optional. When set, the journal lives in Azure Table Storage instead of SQLite, so it can",
+        "be read from anywhere - 'report' and 'purge' then work against a run hosted in Azure.",
+        "ConnectionString covers the emulator (UseDevelopmentStorage=true) and local runs.",
+        "Prefer Endpoint in Azure: shared-key access to storage is commonly disabled by policy,",
+        "and Endpoint authenticates with Entra (managed identity when hosted, az login locally)."
+      ],
+      "JournalTable": {
+        "ConnectionString": null,
+        "Endpoint": null,
+        "TableName": "TenantPulseJournal"
+      },
       "KillSwitchFile": ".state/STOP",
       "MarkerHeaderName": "X-TenantPulse",
       "MarkerValue": "simulated"

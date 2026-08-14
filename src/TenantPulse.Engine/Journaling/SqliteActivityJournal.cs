@@ -62,9 +62,12 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
                 purge_path   TEXT    NULL,
                 detail       TEXT    NULL,
                 error        TEXT    NULL,
+                web_link     TEXT    NULL,
                 purged       INTEGER NOT NULL DEFAULT 0
             );
             """, cancellationToken).ConfigureAwait(false);
+
+        await AddColumnIfMissingAsync(connection, "web_link", cancellationToken).ConfigureAwait(false);
 
         await ExecuteAsync(connection,
             "CREATE INDEX IF NOT EXISTS ix_journal_occurred ON activity_journal (occurred_utc);",
@@ -92,15 +95,16 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
             command.CommandText = """
                 INSERT INTO activity_journal
                     (intent_id, occurred_utc, kind, actor_upn, storyline_id, topic, outcome,
-                     resource_id, purge_path, detail, error, purged)
+                     resource_id, purge_path, detail, error, web_link, purged)
                 VALUES
                     ($intent, $occurred, $kind, $actor, $storyline, $topic, $outcome,
-                     $resource, $purge, $detail, $error, 0)
+                     $resource, $purge, $detail, $error, $weblink, 0)
                 ON CONFLICT(intent_id) DO UPDATE SET
                     occurred_utc = excluded.occurred_utc,
                     outcome      = excluded.outcome,
                     resource_id  = COALESCE(excluded.resource_id, activity_journal.resource_id),
                     purge_path   = COALESCE(excluded.purge_path, activity_journal.purge_path),
+                    web_link     = COALESCE(excluded.web_link, activity_journal.web_link),
                     detail       = excluded.detail,
                     error        = excluded.error;
                 """;
@@ -116,6 +120,7 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
             command.Parameters.AddWithValue("$purge", (object?)result.PurgePath ?? DBNull.Value);
             command.Parameters.AddWithValue("$detail", (object?)result.Detail ?? DBNull.Value);
             command.Parameters.AddWithValue("$error", (object?)result.Error ?? DBNull.Value);
+            command.Parameters.AddWithValue("$weblink", (object?)result.WebLink ?? DBNull.Value);
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -137,42 +142,62 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
             """;
         command.Parameters.AddWithValue("$since", since.ToString("O"));
 
-        var byKind = new Dictionary<ActivityKind, int>();
-        var byActor = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        int total = 0, executed = 0, simulated = 0, skipped = 0, failed = 0;
+        var summary = new JournalSummaryBuilder();
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            total++;
+            var kind = Enum.TryParse<ActivityKind>(reader.GetString(0), out var parsedKind)
+                ? parsedKind
+                : ActivityKind.SendMail;
 
-            if (Enum.TryParse<ActivityKind>(reader.GetString(0), out var kind))
-            {
-                byKind[kind] = byKind.GetValueOrDefault(kind) + 1;
-            }
+            var outcome = Enum.TryParse<ActivityOutcome>(reader.GetString(2), out var parsedOutcome)
+                ? parsedOutcome
+                : ActivityOutcome.Failed;
 
-            var actor = reader.GetString(1);
-            byActor[actor] = byActor.GetValueOrDefault(actor) + 1;
-
-            switch (reader.GetString(2))
-            {
-                case nameof(ActivityOutcome.Executed): executed++; break;
-                case nameof(ActivityOutcome.Simulated): simulated++; break;
-                case nameof(ActivityOutcome.Skipped): skipped++; break;
-                case nameof(ActivityOutcome.Failed): failed++; break;
-            }
+            summary.Add(kind, reader.GetString(1), outcome);
         }
 
-        return new JournalSummary(total, executed, simulated, skipped, failed, byKind, byActor);
+        return summary.Build();
     }
 
-    public async Task<IReadOnlyList<JournalEntry>> RecentAsync(int count, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<JournalEntry>> QueryAsync(
+        JournalQuery query,
+        CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
 
-        command.CommandText = $"{SelectColumns} ORDER BY row_id DESC LIMIT $count;";
-        command.Parameters.AddWithValue("$count", count);
+        var filters = new List<string>();
+
+        if (query.Since > DateTimeOffset.MinValue)
+        {
+            filters.Add("occurred_utc >= $since");
+            command.Parameters.AddWithValue("$since", query.Since.ToString("O"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ActorUpn))
+        {
+            filters.Add("actor_upn = $actor COLLATE NOCASE");
+            command.Parameters.AddWithValue("$actor", query.ActorUpn);
+        }
+
+        if (query.Kind is { } kind)
+        {
+            filters.Add("kind = $kind");
+            command.Parameters.AddWithValue("$kind", kind.ToString());
+        }
+
+        if (query.Outcome is { } outcome)
+        {
+            filters.Add("outcome = $outcome");
+            command.Parameters.AddWithValue("$outcome", outcome.ToString());
+        }
+
+        var where = filters.Count > 0 ? $"WHERE {string.Join(" AND ", filters)}" : string.Empty;
+
+        command.CommandText = $"{SelectColumns} {where} ORDER BY row_id DESC LIMIT $limit;";
+        command.Parameters.AddWithValue("$limit", Math.Max(1, query.Limit));
 
         return await ReadEntriesAsync(command, cancellationToken).ConfigureAwait(false);
     }
@@ -197,7 +222,7 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
         return await ReadEntriesAsync(command, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task MarkPurgedAsync(long rowId, CancellationToken cancellationToken)
+    public async Task MarkPurgedAsync(JournalEntry entry, CancellationToken cancellationToken)
     {
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -205,7 +230,7 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
             await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
             command.CommandText = "UPDATE activity_journal SET purged = 1 WHERE row_id = $id;";
-            command.Parameters.AddWithValue("$id", rowId);
+            command.Parameters.AddWithValue("$id", entry.RowId);
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -240,7 +265,7 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
         return Convert.ToInt32(scalar, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    public async Task<bool> HasExecutedAsync(string intentId, CancellationToken cancellationToken)
+    public async Task<bool> HasExecutedAsync(ActivityIntent intent, CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
@@ -250,7 +275,7 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
             FROM activity_journal
             WHERE intent_id = $intent AND outcome = 'Executed';
             """;
-        command.Parameters.AddWithValue("$intent", intentId);
+        command.Parameters.AddWithValue("$intent", intent.Id);
 
         var scalar = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return Convert.ToInt32(scalar, System.Globalization.CultureInfo.InvariantCulture) > 0;
@@ -258,9 +283,33 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
 
     private const string SelectColumns = """
         SELECT row_id, intent_id, occurred_utc, kind, actor_upn, storyline_id, topic,
-               outcome, resource_id, purge_path, detail, error, purged
+               outcome, resource_id, purge_path, detail, error, purged, web_link
         FROM activity_journal
         """;
+
+    /// <summary>
+    /// Adds a column to a journal that predates it. <c>CREATE TABLE IF NOT EXISTS</c> leaves an
+    /// existing table alone, so a database written by an older build would otherwise keep failing
+    /// on the new column.
+    /// </summary>
+    private static async Task AddColumnIfMissingAsync(
+        SqliteConnection connection,
+        string column,
+        CancellationToken cancellationToken)
+    {
+        await using var check = connection.CreateCommand();
+        check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('activity_journal') WHERE name = $name;";
+        check.Parameters.AddWithValue("$name", column);
+
+        var scalar = await check.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        if (Convert.ToInt32(scalar, System.Globalization.CultureInfo.InvariantCulture) > 0)
+        {
+            return;
+        }
+
+        await ExecuteAsync(connection, $"ALTER TABLE activity_journal ADD COLUMN {column} TEXT NULL;",
+            cancellationToken).ConfigureAwait(false);
+    }
 
     private static async Task<IReadOnlyList<JournalEntry>> ReadEntriesAsync(
         SqliteCommand command,
@@ -285,7 +334,9 @@ public sealed class SqliteActivityJournal(TenantPulseOptions options) : IActivit
                 PurgePath = reader.IsDBNull(9) ? null : reader.GetString(9),
                 Detail = reader.IsDBNull(10) ? null : reader.GetString(10),
                 Error = reader.IsDBNull(11) ? null : reader.GetString(11),
-                Purged = reader.GetInt32(12) != 0
+                Purged = reader.GetInt32(12) != 0,
+                WebLink = reader.IsDBNull(13) ? null : reader.GetString(13),
+                StorageKey = reader.GetInt64(0).ToString(System.Globalization.CultureInfo.InvariantCulture)
             });
         }
 

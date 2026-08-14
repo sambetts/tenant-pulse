@@ -25,7 +25,17 @@ public static class ServiceRegistration
         services.AddSingleton(options);
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<SafetyGovernor>();
-        services.AddSingleton<IActivityJournal, SqliteActivityJournal>();
+
+        // A table is readable from anywhere, which is what makes a hosted run observable and lets
+        // report and purge run from a laptop. SQLite stays the default for local use.
+        if (options.Simulation.JournalTable.IsConfigured)
+        {
+            services.AddSingleton<IActivityJournal, AzureTableActivityJournal>();
+        }
+        else
+        {
+            services.AddSingleton<IActivityJournal, SqliteActivityJournal>();
+        }
 
         services.AddSingleton<UserTokenBroker>();
         services.AddSingleton<IUserTokenProvider>(sp => sp.GetRequiredService<UserTokenBroker>());

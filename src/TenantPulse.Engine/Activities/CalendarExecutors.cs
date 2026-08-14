@@ -62,7 +62,8 @@ public sealed class CreateEventExecutor(
             return ActivityResult.Executed(
                 eventId,
                 eventId is null ? null : $"users/{upn}/events/{eventId}",
-                $"Created Teams meeting '{subject}' with {intent.Targets.Count} attendee(s).");
+                $"Created Teams meeting '{subject}' with {intent.Targets.Count} attendee(s).",
+                created?.GetStringOrNull("webLink"));
         }
         catch (UserNotEnrolledException ex)
         {

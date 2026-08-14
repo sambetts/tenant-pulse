@@ -27,13 +27,32 @@ public sealed record JournalEntry
     /// <summary>Graph path used to delete the artefact during purge.</summary>
     public string? PurgePath { get; init; }
 
+    /// <summary>Browser link to the artefact, so a report can point straight at it.</summary>
+    public string? WebLink { get; init; }
+
     public string? Detail { get; init; }
 
     public string? Error { get; init; }
 
     /// <summary>Set once the artefact has been removed by <c>purge</c>.</summary>
     public bool Purged { get; init; }
+
+    /// <summary>
+    /// Opaque address of this row in whichever store produced it, so it can be updated later
+    /// without the caller knowing the storage layout. SQLite uses <see cref="RowId"/>; Azure Table
+    /// uses a partition/row key pair. Null for entries that were not read from a store.
+    /// </summary>
+    public string? StorageKey { get; init; }
 }
+
+/// <summary>What one persona did over the reported window, split by outcome.</summary>
+public sealed record ActorTally(
+    string ActorUpn,
+    int Total,
+    int Executed,
+    int Simulated,
+    int Skipped,
+    int Failed);
 
 public sealed record JournalSummary(
     int Total,
@@ -42,7 +61,27 @@ public sealed record JournalSummary(
     int Skipped,
     int Failed,
     IReadOnlyDictionary<ActivityKind, int> ByKind,
-    IReadOnlyDictionary<string, int> ByActor);
+    IReadOnlyList<ActorTally> ByActor);
+
+/// <summary>
+/// Filter for reading the journal back. Every field is optional; the default reads the most recent
+/// activity regardless of persona, kind or outcome.
+/// </summary>
+public sealed record JournalQuery
+{
+    /// <summary>Only entries recorded at or after this instant.</summary>
+    public DateTimeOffset Since { get; init; } = DateTimeOffset.MinValue;
+
+    /// <summary>Restrict to one persona. Matched case-insensitively.</summary>
+    public string? ActorUpn { get; init; }
+
+    public ActivityKind? Kind { get; init; }
+
+    public ActivityOutcome? Outcome { get; init; }
+
+    /// <summary>Maximum number of entries to return, newest first.</summary>
+    public int Limit { get; init; } = 50;
+}
 
 /// <summary>
 /// Durable record of everything tenant-pulse has done. Two jobs: it lets you report on what the
@@ -57,18 +96,28 @@ public interface IActivityJournal
 
     Task<JournalSummary> SummariseAsync(DateTimeOffset since, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<JournalEntry>> RecentAsync(int count, CancellationToken cancellationToken);
+    Task<IReadOnlyList<JournalEntry>> QueryAsync(JournalQuery query, CancellationToken cancellationToken);
 
     /// <summary>Entries that created a deletable artefact and have not yet been purged.</summary>
     Task<IReadOnlyList<JournalEntry>> PurgeableAsync(DateTimeOffset since, CancellationToken cancellationToken);
 
-    Task MarkPurgedAsync(long rowId, CancellationToken cancellationToken);
+    /// <summary>
+    /// Flags an entry as purged. Takes the entry rather than an id because the two backing stores
+    /// address a row differently — SQLite by <see cref="JournalEntry.RowId"/>, Azure Table by the
+    /// partition/row key pair derived from <see cref="JournalEntry.OccurredUtc"/> and
+    /// <see cref="JournalEntry.IntentId"/>.
+    /// </summary>
+    Task MarkPurgedAsync(JournalEntry entry, CancellationToken cancellationToken);
 
     /// <summary>Count of activities already performed by a persona on a given UTC day.</summary>
     Task<int> CountForActorOnDayAsync(string actorUpn, DateOnly utcDay, CancellationToken cancellationToken);
 
-    /// <summary>True when this intent has already been executed (makes replays idempotent).</summary>
-    Task<bool> HasExecutedAsync(string intentId, CancellationToken cancellationToken);
+    /// <summary>
+    /// True when this intent has already been executed (makes replays idempotent). Takes the whole
+    /// intent, not just its id, because a partitioned store needs the scheduled day to turn this
+    /// into a point lookup rather than a table scan — and this runs for every planned activity.
+    /// </summary>
+    Task<bool> HasExecutedAsync(ActivityIntent intent, CancellationToken cancellationToken);
 
     /// <summary>
     /// Copies the journal to its configured durable location, if one is set.

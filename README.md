@@ -51,7 +51,7 @@ This writes to a real tenant, so the guardrails are not optional.
 | **Dry run by default** | Every command plans and logs but writes nothing until you pass `--live`. |
 | **Rate limits** | Per-user daily cap, tenant-wide hourly cap, and a minimum gap between one person's activities. |
 | **Kill switch** | Create `.state/STOP` and a running simulator stops within a minute. |
-| **Full journal** | Everything it does is recorded in SQLite, with the Graph path needed to delete it. |
+| **Full journal** | Everything it does is recorded — in SQLite locally, or an Azure Table when hosted — with the Graph path needed to delete it and a link to the artefact itself. |
 | **Reversible** | `tenant-pulse purge` deletes what it created, so the tenant can be handed back clean. |
 | **Marked content** | Generated mail carries an `X-TenantPulse` header — invisible in Outlook, but findable. |
 
@@ -169,12 +169,41 @@ A few things worth knowing:
 | **No secrets in the image** | The Azure OpenAI key and shared password are Container Apps secrets, injected at run time. |
 | **It enrols itself** | There is no token cache to copy up. With `Auth.Mode=UsernamePassword` the container signs each user in on demand, so it recovers from a cold start on its own. |
 | **One replica, always** | The simulator is single-writer. Two replicas would double-post into the tenant. |
-| **Journal is split** | SQLite cannot run on an SMB file share, so the live journal sits on container-local disk and is snapshotted to the mounted share. That snapshot is what keeps `purge` able to clean up after a restart. |
-| **Token caches are unencrypted there** | No DPAPI or keyring exists in a container, so MSAL falls back to plain files on the share. They hold refresh tokens — keep the share private. |
-| **Kill switch** | Upload a file named `STOP` to the file share; the simulator stops within a minute. |
+| **Token caches are unencrypted there** | No DPAPI or keyring exists in a container, so MSAL falls back to plain files. They hold refresh tokens — keep that path private. |
 
-To clean the tenant up afterwards, download `journal.db` from the share and run `purge --live`
-against it locally.
+### Durable state needs `-PrivateNetworking`, which needs an egress path
+
+By default the deployment mounts nothing and keeps the journal in SQLite on container-local disk.
+That runs, but the journal does not survive a restart — so `purge` cannot clean up afterwards, and
+there is nothing for `report` to read remotely. The console log is the only record.
+
+Pass `-PrivateNetworking` for the durable version: a VNet, private endpoints onto the storage
+account, and the journal in an Azure Table written with the app's managed identity. Then `report`
+and `purge` work from anywhere with line of sight to the endpoint:
+
+```pwsh
+$env:TENANTPULSE_TenantPulse__Simulation__JournalTable__Endpoint = 'https://<account>.table.core.windows.net'
+
+dotnet run --project src/TenantPulse.Cli -- report --since 7 --recent 20
+dotnet run --project src/TenantPulse.Cli -- report --persona megan@M365x000000.onmicrosoft.com
+dotnet run --project src/TenantPulse.Cli -- purge --since 30 --live
+```
+
+`report` lists every activity with a link to the mail, document, meeting or Teams message it
+produced, so a claim can be checked in a browser rather than taken on trust. Failures are always
+shown. Reading needs the **Storage Table Data Reader** role; `purge` marks rows, so it needs
+**Storage Table Data Contributor**.
+
+**The catch.** A VNet-integrated Container Apps environment has no outbound internet unless you give
+it one, and this simulator needs plenty — Microsoft Graph, Azure OpenAI, and the image pull itself.
+That normally means a NAT gateway, which needs a public IP. In a governed subscription that forbids
+public IPs, `-PrivateNetworking` cannot work: the environment cannot pull so much as
+`mcr.microsoft.com`, and fails with `Deployment Progress Deadline Exceeded. 0/1 replicas ready` and
+no other explanation. Meanwhile a policy that forces `publicNetworkAccess: Disabled` on storage
+means a *non*-VNet environment cannot reach the account at all — and a volume pointing at an
+unreachable share puts the container into `CrashLoopBackOff` with no log output whatsoever. Those
+two policies together leave no way to have both durable state and a working simulator; sort out
+egress first.
 
 ---
 
@@ -188,7 +217,7 @@ against it locally.
 | `run` | Run continuously, acting as each scheduled moment arrives. |
 | `once` | Execute a few activities immediately — the fastest end-to-end proof. |
 | `verify-copilot` | Prove empirically whether API-driven Copilot prompts register as real usage. |
-| `report` | Summarise what has been done. |
+| `report` | Summarise what has been done — totals, per persona, failures, and links to what it created. |
 | `purge` | Delete what tenant-pulse created. |
 
 Run `tenant-pulse help` for the full option list.
@@ -244,7 +273,8 @@ up in Copilot Studio analytics.
                              Microsoft Graph  (delegated, per user)
                                     │
                                     ▼
-                            SQLite journal ──► report / purge
+                            activity journal ──► report / purge
+                          (SQLite, or Azure Table when hosted)
 ```
 
 | Project | Role |

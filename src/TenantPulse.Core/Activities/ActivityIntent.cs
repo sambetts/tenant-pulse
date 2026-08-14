@@ -78,12 +78,30 @@ public sealed record ActivityResult
     /// <summary>Graph resource path used to delete the artefact during purge, when deletable.</summary>
     public string? PurgePath { get; init; }
 
+    /// <summary>
+    /// Browser link to the artefact — the <c>webUrl</c> or <c>webLink</c> Graph returns when it
+    /// creates something. Recorded so a report can point straight at the mail, document, meeting or
+    /// Teams message rather than just naming it.
+    /// </summary>
+    public string? WebLink { get; init; }
+
     public string? Detail { get; init; }
 
     public string? Error { get; init; }
 
-    public static ActivityResult Executed(string? resourceId = null, string? purgePath = null, string? detail = null) =>
-        new() { Outcome = ActivityOutcome.Executed, ResourceId = resourceId, PurgePath = purgePath, Detail = detail };
+    public static ActivityResult Executed(
+        string? resourceId = null,
+        string? purgePath = null,
+        string? detail = null,
+        string? webLink = null) =>
+        new()
+        {
+            Outcome = ActivityOutcome.Executed,
+            ResourceId = resourceId,
+            PurgePath = purgePath,
+            Detail = detail,
+            WebLink = webLink
+        };
 
     public static ActivityResult Simulated(string? detail = null) =>
         new() { Outcome = ActivityOutcome.Simulated, Detail = detail };

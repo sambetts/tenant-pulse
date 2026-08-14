@@ -179,7 +179,7 @@ public sealed class PulseEngine(
         CancellationToken cancellationToken)
     {
         // Replaying a plan (after a restart) must never repeat work already done.
-        if (await journal.HasExecutedAsync(intent.Id, cancellationToken).ConfigureAwait(false))
+        if (await journal.HasExecutedAsync(intent, cancellationToken).ConfigureAwait(false))
         {
             logger.LogDebug("Already executed {IntentId}; skipping.", intent.Id);
             return ActivityResult.Skipped("Already executed.");

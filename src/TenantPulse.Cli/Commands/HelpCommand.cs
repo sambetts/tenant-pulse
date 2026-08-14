@@ -43,9 +43,16 @@ internal static class HelpCommand
                     --app-token <jwt>   App-only token with AiEnterpriseInteraction.Read.All.
                     --wait <seconds>    Settle delay before reading history (default 60).
 
-              report            Summarise what tenant-pulse has done.
+              report            Summarise what tenant-pulse has done, with links to it.
                     --since <days>      Look back this many days (default 7).
-                    --recent <n>        Also list the n most recent activities.
+                    --recent <n>        List the n most recent activities.
+                    --persona <upn>     Only this persona's activity.
+                    --kind <kind>       Only this activity kind (SendMail, ChannelPost, ...).
+                    --outcome <o>       Executed | Simulated | Skipped | Failed.
+                    --by-persona        Every persona, not just the busiest ten.
+                                        Failures are always listed. Any filter implies --recent.
+                                        Reads the Azure Table journal when one is configured, so
+                                        this reports on a hosted run from anywhere.
 
               purge             Delete artefacts tenant-pulse created (mail, files, events).
                     --since <days>      Only purge things created in the last n days (default 30).

@@ -59,7 +59,8 @@ public sealed class ChatMessageExecutor(
             return ActivityResult.Executed(
                 messageId,
                 messageId is null ? null : $"chats/{chatId}/messages/{messageId}/softDelete",
-                "Posted Teams chat message. Purge path requires POST softDelete, not DELETE.");
+                "Posted Teams chat message. Purge path requires POST softDelete, not DELETE.",
+                message?.GetStringOrNull("webUrl"));
         }
         catch (UserNotEnrolledException ex)
         {
@@ -157,7 +158,8 @@ public sealed class ChannelPostExecutor(
             return ActivityResult.Executed(
                 messageId,
                 messageId is null ? null : $"teams/{teamChannel.Value.TeamId}/channels/{teamChannel.Value.ChannelId}/messages/{messageId}/softDelete",
-                "Posted channel message. Purge path requires POST softDelete, not DELETE.");
+                "Posted channel message. Purge path requires POST softDelete, not DELETE.",
+                message?.GetStringOrNull("webUrl"));
         }
         catch (UserNotEnrolledException ex)
         {
@@ -221,7 +223,8 @@ public sealed class ChannelReplyExecutor(
             return ActivityResult.Executed(
                 replyId,
                 replyId is null ? null : $"teams/{target.Value.TeamId}/channels/{target.Value.ChannelId}/messages/{target.Value.MessageId}/replies/{replyId}/softDelete",
-                "Replied to channel thread. Purge path requires POST softDelete, not DELETE.");
+                "Replied to channel thread. Purge path requires POST softDelete, not DELETE.",
+                reply?.GetStringOrNull("webUrl"));
         }
         catch (UserNotEnrolledException ex)
         {

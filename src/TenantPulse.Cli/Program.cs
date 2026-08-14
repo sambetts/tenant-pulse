@@ -71,7 +71,7 @@ try
         "verify-copilot" => await new VerifyCopilotCommand(provider, options, logger)
             .RunAsync(commandLine, cancellation.Token),
 
-        "report" => await new ReportCommand(provider, logger)
+        "report" => await new ReportCommand(provider, options, logger)
             .RunAsync(commandLine, cancellation.Token),
 
         "purge" => await new PurgeCommand(provider, options, logger)

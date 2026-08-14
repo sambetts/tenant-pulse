@@ -53,7 +53,8 @@ public sealed class CreateDocumentExecutor(
             return ActivityResult.Executed(
                 itemId,
                 itemId is null || driveId is null ? null : $"drives/{driveId}/items/{itemId}",
-                $"Created '{fileName}' in {target.Description}.");
+                $"Created '{fileName}' in {target.Description}.",
+                item.GetStringOrNull("webUrl"));
         }
         catch (UserNotEnrolledException ex)
         {
@@ -203,7 +204,8 @@ public sealed class EditDocumentExecutor(
             return ActivityResult.Executed(
                 itemId,
                 $"drives/{document.Value.DriveId}/items/{itemId}",
-                $"Appended an update to '{document.Value.Name}'.");
+                $"Appended an update to '{document.Value.Name}'.",
+                item.GetStringOrNull("webUrl"));
         }
         catch (UserNotEnrolledException ex)
         {

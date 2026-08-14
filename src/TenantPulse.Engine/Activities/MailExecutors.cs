@@ -74,7 +74,7 @@ public sealed class SendMailExecutor(
             // Sending moves the message from Drafts to Sent Items and Exchange assigns it a NEW id,
             // so the draft id is useless for purging. Resolve the sent copy by its internet message
             // id, which is stable across the move.
-            var sentId = await ExecutorHelpers.ResolveSentMessageIdAsync(
+            var (sentId, sentLink) = await ExecutorHelpers.ResolveSentMessageAsync(
                 graph, logger, upn, internetMessageId, cancellationToken).ConfigureAwait(false);
 
             logger.LogInformation("Sent simulated mail {MessageId} as {UserPrincipalName}.",
@@ -84,7 +84,8 @@ public sealed class SendMailExecutor(
                 sentId ?? messageId,
                 sentId is null ? null : $"users/{upn}/messages/{sentId}",
                 $"Sent '{subject}' to {intent.Targets.Count} recipient(s)." +
-                (sentId is null ? " (sent copy not resolved, so it cannot be purged)" : string.Empty));
+                (sentId is null ? " (sent copy not resolved, so it cannot be purged)" : string.Empty),
+                sentLink);
         }
         catch (UserNotEnrolledException ex)
         {
@@ -207,14 +208,15 @@ public sealed class ReplyMailExecutor(
                 throw;
             }
 
-            var sentId = await ExecutorHelpers.ResolveSentMessageIdAsync(
+            var (sentId, sentLink) = await ExecutorHelpers.ResolveSentMessageAsync(
                 graph, logger, upn, internetMessageId, cancellationToken).ConfigureAwait(false);
 
             return ActivityResult.Executed(
                 sentId ?? draftId,
                 sentId is null ? null : $"users/{upn}/messages/{sentId}",
                 $"Replied to '{subject}'." +
-                (sentId is null ? " (sent copy not resolved, so it cannot be purged)" : string.Empty));
+                (sentId is null ? " (sent copy not resolved, so it cannot be purged)" : string.Empty),
+                sentLink);
         }
         catch (UserNotEnrolledException ex)
         {
@@ -326,11 +328,11 @@ internal static partial class ExecutorHelpers
     /// <para>
     /// Sending moves a message from Drafts to Sent Items and Exchange assigns it a <b>new</b> item
     /// id, so the draft id is useless for purging. The internet message id is stable across the
-    /// move, so it is what links the two. Returns null when it cannot be resolved — the mail is
-    /// still sent, it just cannot be purged later.
+    /// move, so it is what links the two. Returns nulls when it cannot be resolved — the mail is
+    /// still sent, it just cannot be purged or linked to later.
     /// </para>
     /// </summary>
-    public static async Task<string?> ResolveSentMessageIdAsync(
+    public static async Task<(string? Id, string? WebLink)> ResolveSentMessageAsync(
         IGraphClient graph,
         ILogger logger,
         string upn,
@@ -339,7 +341,7 @@ internal static partial class ExecutorHelpers
     {
         if (string.IsNullOrWhiteSpace(internetMessageId))
         {
-            return null;
+            return (null, null);
         }
 
         try
@@ -351,14 +353,14 @@ internal static partial class ExecutorHelpers
                 var results = await graph.GetPagedAsync(
                     upn,
                     $"users/{upn}/mailFolders/sentitems/messages" +
-                    $"?$filter=internetMessageId eq '{Uri.EscapeDataString(escaped)}'&$select=id&$top=1",
+                    $"?$filter=internetMessageId eq '{Uri.EscapeDataString(escaped)}'&$select=id,webLink&$top=1",
                     maxItems: 1,
                     cancellationToken).ConfigureAwait(false);
 
                 var id = results.Count > 0 ? results[0].GetStringOrNull("id") : null;
                 if (!string.IsNullOrWhiteSpace(id))
                 {
-                    return id;
+                    return (id, results[0].GetStringOrNull("webLink"));
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(1 + attempt), cancellationToken).ConfigureAwait(false);
@@ -370,7 +372,7 @@ internal static partial class ExecutorHelpers
                 upn, ex.StatusCode);
         }
 
-        return null;
+        return (null, null);
     }
 
     public static string MarkerHeaderName(TenantPulseOptions options)

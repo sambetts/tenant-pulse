@@ -41,7 +41,9 @@ dotnet test TenantPulse.Tests/TenantPulse.Tests.csproj
 
 - `TreatWarningsAsErrors=true` and `EnforceCodeStyleInBuild=true` — **any warning fails the build**.
   Fix it, don't suppress it.
-- Tests need no tenant, no network, no credentials. 41 tests, all green. A failure is yours.
+- Tests need no tenant, no network, no credentials. 54 tests, all green. A failure is yours.
+  The Azure Table journal tests are the one exception and they skip themselves unless the storage
+  emulator is up: `npm i -g azurite` then `azurite-table --silent --location <dir>`.
 - Fastest end-to-end check with no tenant:
   `dotnet run --project src/TenantPulse.Cli -- plan --offline --sample-content 6`
 
@@ -66,7 +68,7 @@ src/
 │   ├── Copilot/                    ← Copilot Chat API, Direct Line agents, usage verifier
 │   ├── Content/                    ← Azure OpenAI + template generators
 │   ├── Personas/                   ← directory loader + synthetic workforce for --offline
-│   ├── Journaling/                 ← SQLite journal
+│   ├── Journaling/                 ← SQLite + Azure Table journals
 │   └── PulseEngine.cs              ← the run loop
 ├── TenantPulse.Cli/Commands/       ← doctor, bootstrap, plan, run, once, verify-copilot, report, purge
 └── TenantPulse.Tests/
@@ -138,6 +140,43 @@ Things it does deliberately, which you should not undo:
   `Simulation.JournalSnapshotPath`: the live journal runs on container-local disk and is copied to
   the share with `VACUUM INTO` (staged locally, then a plain file copy — SMB handles streams fine,
   just not locks). Without that snapshot a restart would lose every purge path.
+  **The hosted deployment no longer relies on any of this** — it uses
+  `Simulation.JournalTable` (Azure Table), which is durable, readable from anywhere, and needs no
+  snapshot. The SQLite path and its snapshot remain for local use.
+- **A file share whose storage account has `publicNetworkAccess: Disabled` silently fails to
+  mount.** The container still starts, `/app/.state` is just the image's own empty directory, and
+  every snapshot "succeeds" onto disposable local disk. Nothing errors; durability simply stops.
+  If state ever looks missing, check `mount | grep cifs` inside the container first.
+- **A *newly created* environment with an unreachable share does not degrade so politely** — it
+  goes into `CrashLoopBackOff` with **no console output at all**, which looks like a broken image.
+  If the container dies before .NET logs anything, suspect the volume. Hence the deploy script only
+  mounts the share under `-PrivateNetworking`.
+- **Container Apps + VNet + private endpoints is all-or-nothing, and needs egress.** A VNet
+  environment has no outbound internet unless something provides it, and this simulator needs Graph,
+  Azure OpenAI and the image pull. Without a NAT gateway the environment cannot pull
+  `mcr.microsoft.com`, and the only symptom is `Deployment Progress Deadline Exceeded. 0/1 replicas
+  ready` — no pull error, no mount error. Diagnose it by deploying a stock public image into the
+  same environment; if that will not start either, it is egress, not the app.
+- **Governed subscriptions can make this unsolvable.** On the reference subscription,
+  `Microsoft.Network/AllowBringYourOwnPublicIpAddress` is not registered, so no public IP means no
+  NAT gateway means no VNet egress; and a policy re-disables `publicNetworkAccess` on storage within
+  seconds of it being enabled, so a non-VNet environment cannot reach storage either. Verify both
+  before promising durable state: `az network public-ip create` and
+  `az storage account update --public-network-access Enabled` are the two-command test.
+- **Storage account keys are not a safe foundation in a governed subscription.** A
+  `StorageAccount_DisableLocalAuth` policy can switch shared-key access off underneath a working
+  deployment, so the journal table authenticates with the app's managed identity
+  (`JournalTable.Endpoint` + `DefaultAzureCredential`). `JournalTable.ConnectionString` exists for
+  the emulator and local runs.
+- **`az containerapp env delete` returns before the deletion completes.** Creating over the top
+  fails with `ManagedEnvironmentScheduledForDelete`, and because `az` failures do not stop a
+  PowerShell script the rest of the deployment then runs against nothing and still reports success.
+  The script polls for the deletion and asserts each resource exists afterwards.
+- **`az containerapp exec` from Windows is doubly awkward.** `az.cmd` hands the command to cmd.exe,
+  which mangles nested quotes (`'sed' is not recognized`) — call az's bundled `python.exe -IBm
+  azure.cli` directly instead. And its output decoder dies with `UnicodeEncodeError: 'charmap'` on
+  any non-ASCII the container prints, which `report` is full of; `PYTHONUTF8`/`chcp` do not help, so
+  pipe the command through `sed 's/[^ -~]//g'` inside the container.
 - **No DPAPI or keyring exists in a container**, so `TokenCacheStore` falls back to an unencrypted
   MSAL cache. It still holds refresh tokens for every user — the volume must stay private.
 - **`run` needs a directory reader to start.** With an empty cache there is no enrolled user, so the
