@@ -56,3 +56,6 @@ storage-state/
 .env
 .env.*
 !.env.example
+
+# Azure deployment session plans can contain subscription ids and local artifact paths
+.azure/

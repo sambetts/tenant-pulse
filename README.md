@@ -194,6 +194,12 @@ produced, so a claim can be checked in a browser rather than taken on trust. Fai
 shown. Reading needs the **Storage Table Data Reader** role; `purge` marks rows, so it needs
 **Storage Table Data Contributor**.
 
+Some governed subscriptions enforce `allowSharedKeyAccess=false` on storage accounts. Azure Files
+SMB mounts use an account key, so the token-cache volume cannot start under that policy. The deploy
+script detects this and leaves token caches on container-local disk while keeping the Azure Table
+journal durable. `Auth.Mode=UsernamePassword` re-enrols users after a restart. Pass
+`-EphemeralTokenCache` to request this mode explicitly.
+
 **The catch.** A VNet-integrated Container Apps environment has no outbound internet unless you give
 it one, and this simulator needs plenty — Microsoft Graph, Azure OpenAI, and the image pull itself.
 That normally means a NAT gateway, which needs a public IP. In a governed subscription that forbids
@@ -204,6 +210,16 @@ means a *non*-VNet environment cannot reach the account at all — and a volume 
 unreachable share puts the container into `CrashLoopBackOff` with no log output whatsoever. Those
 two policies together leave no way to have both durable state and a working simulator; sort out
 egress first.
+
+If Azure reports `SubscriptionNotRegisteredForFeature` while creating the NAT public IP:
+
+```pwsh
+az feature register --namespace Microsoft.Network --name AllowBringYourOwnPublicIpAddress
+az provider register --namespace Microsoft.Network --wait
+```
+
+See [`docs/azure-deployment.md`](docs/azure-deployment.md) for the resource map, rationale,
+verification commands, upgrade safety, and Log Analytics guidance.
 
 ---
 

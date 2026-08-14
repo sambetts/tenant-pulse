@@ -162,12 +162,23 @@ Things it does deliberately, which you should not undo:
   NAT gateway means no VNet egress; and a policy re-disables `publicNetworkAccess` on storage within
   seconds of it being enabled, so a non-VNet environment cannot reach storage either. Verify both
   before promising durable state: `az network public-ip create` and
-  `az storage account update --public-network-access Enabled` are the two-command test.
+  `az storage account update --public-network-access Enabled` are the two-command test. ARM
+  deployment validation can still succeed while the public-IP feature is unregistered, so inspect
+  `az feature show` explicitly.
 - **Storage account keys are not a safe foundation in a governed subscription.** A
   `StorageAccount_DisableLocalAuth` policy can switch shared-key access off underneath a working
   deployment, so the journal table authenticates with the app's managed identity
   (`JournalTable.Endpoint` + `DefaultAzureCredential`). `JournalTable.ConnectionString` exists for
-  the emulator and local runs.
+  the emulator and local runs. The same policy also prevents the Azure Files SMB token-cache mount
+  from authenticating. `deploy-azure.ps1` detects that state and keeps token caches on local disk;
+  ROPC re-enrols users after restart while the Table journal remains durable.
+- **Container Apps environment recreation can leak Log Analytics workspaces.** If no workspace is
+  supplied, Azure creates a random one and does not delete it with the environment. The deployment
+  script captures and reuses the current workspace before recreation, or creates one stable
+  `log-<prefix>` workspace for a fresh deployment.
+- **An accepted Container App revision is not a healthy deployment.** ARM can report success while
+  the replica is still failing image pulls or Azure Files mounts. The deployment script waits for
+  exactly one ready replica and prints recent system events before it reports success.
 - **`az containerapp env delete` returns before the deletion completes.** Creating over the top
   fails with `ManagedEnvironmentScheduledForDelete`, and because `az` failures do not stop a
   PowerShell script the rest of the deployment then runs against nothing and still reports success.

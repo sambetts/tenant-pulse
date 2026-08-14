@@ -6,9 +6,10 @@
     Creates (idempotently) everything the simulator needs and deploys the current source:
 
       * Azure Container Registry, and builds the image server-side - no local Docker required
-      * a storage account, file share and journal table for durable state
+      * a storage account and journal table for durable activity history
+      * an optional file share for token caches when storage shared-key auth is allowed
       * a virtual network, with private endpoints onto that storage account
-      * a Container Apps environment inside that network, with the share attached
+      * a Container Apps environment inside that network
       * the container app itself, pinned to exactly one replica
 
     Why one replica: the simulator is single-writer by design. Two of them would double-post into
@@ -20,13 +21,15 @@
     meetings and messages it created - can be reviewed from anywhere, rather than only from
     wherever the database file happened to sit. It also retires the SQLite-on-SMB snapshot dance:
     SQLite cannot run on a file share, so the journal used to live on disposable container disk and
-    be copied across. The share now only carries the MSAL token caches, which are plain files.
+    be copied across. When policy permits storage shared-key auth, the share only carries the MSAL
+    token caches, which are plain files.
 
-    The storage account holds refresh tokens for every demo user, so its public endpoint is
-    disabled and it is reached over private endpoints. That is why the environment is VNet
-    integrated - a private endpoint is only resolvable from inside the network. It is also load
-    bearing rather than decorative: with public access disabled and no VNet, the file share fails
-    to mount and the container quietly runs with no durable state at all.
+    The storage account's public endpoint is disabled and it is reached over private endpoints.
+    That is why the environment is VNet integrated - a private endpoint is only resolvable from
+    inside the network. In subscriptions that enforce allowSharedKeyAccess=false, Azure Files SMB
+    mounts cannot authenticate. The deployment then keeps token caches on container-local disk and
+    relies on UsernamePassword mode to re-enrol users after a restart; the activity journal remains
+    durable because Azure Table uses the app's managed identity.
 
     Nothing secret is baked into the image. The Azure OpenAI key and the shared demo password are
     Container Apps secrets, injected as environment variables at run time, and the journal is
@@ -59,6 +62,10 @@
 
 .PARAMETER NamePrefix
     Prefix for generated resource names. Must be short and lowercase.
+
+.PARAMETER EphemeralTokenCache
+    Do not mount Azure Files for MSAL token caches. Use this when policy disables storage shared-key
+    authentication. The durable Azure Table journal is unaffected; users re-enrol after a restart.
 
 .PARAMETER OpenAiEndpoint
     Existing Azure OpenAI endpoint. Content generation falls back to templates without one.
@@ -97,6 +104,7 @@ param(
 
     [switch] $PrivateNetworking,
     [switch] $RecreateEnvironment,
+    [switch] $EphemeralTokenCache,
 
     [string] $OpenAiEndpoint,
     [string] $OpenAiDeployment = 'gpt-4.1-mini',
@@ -159,7 +167,7 @@ try {
     Write-Host "  Subscription  $SubscriptionId"
     Write-Host "  Group         $ResourceGroup ($Location)"
     Write-Host "  Registry      $acrName"
-    Write-Host "  Storage       $stName/$shareName"
+    Write-Host "  Storage       $stName/$tableName"
     Write-Host "  App           $appName"
     Write-Host "  Image         $image"
     Write-Host ''
@@ -185,11 +193,26 @@ try {
     az storage account create -n $stName -g $ResourceGroup -l $Location `
         --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 `
         --allow-blob-public-access false --only-show-errors | Out-Null
-    az storage share-rm create --storage-account $stName -g $ResourceGroup -n $shareName --quota 5 --only-show-errors | Out-Null
-
-    $storageKey = az storage account keys list -n $stName -g $ResourceGroup --query '[0].value' -o tsv --only-show-errors
 
     $storageId = az storage account show -n $stName -g $ResourceGroup --query id -o tsv --only-show-errors
+    $sharedKeyAllowed = az storage account show -n $stName -g $ResourceGroup `
+        --query allowSharedKeyAccess -o tsv --only-show-errors
+    $useStateVolume = $PrivateNetworking -and -not $EphemeralTokenCache
+
+    if ($useStateVolume -and $sharedKeyAllowed -eq 'false') {
+        Write-Host '  storage policy disables shared-key auth; token caches will be ephemeral' `
+            -ForegroundColor Yellow
+        $useStateVolume = $false
+    }
+
+    $storageKey = $null
+    if ($useStateVolume) {
+        az storage share-rm create --storage-account $stName -g $ResourceGroup `
+            -n $shareName --quota 5 --only-show-errors | Out-Null
+        $storageKey = az storage account keys list -n $stName -g $ResourceGroup `
+            --query '[0].value' -o tsv --only-show-errors
+    }
+
     $infraSubnetId = $null
 
     # ------------------------------------------------------------------------------------------
@@ -225,14 +248,25 @@ try {
 
         # Outbound egress for the subnet. Without it nothing in the environment starts.
         Write-Host 'NAT gateway for outbound access...' -ForegroundColor Cyan
+        $publicIpFeature = az feature show --namespace Microsoft.Network `
+            --name AllowBringYourOwnPublicIpAddress --query properties.state `
+            -o tsv --only-show-errors 2>$null
+
+        if ($publicIpFeature -ne 'Registered') {
+            Write-Host '  public-IP feature is not registered; testing whether this subscription requires it' `
+                -ForegroundColor Yellow
+        }
+
         az network public-ip create -n "pip-$NamePrefix-nat" -g $ResourceGroup -l $Location `
             --sku Standard --allocation-method Static --only-show-errors | Out-Null
 
         if ($LASTEXITCODE -ne 0) {
             throw "Could not create a public IP for the NAT gateway. Without outbound access a " +
                   "VNet environment cannot pull its image or reach Microsoft Graph, so this " +
-                  "deployment would never start. Re-run without -PrivateNetworking, or get the " +
-                  "subscription registered for Microsoft.Network/AllowBringYourOwnPublicIpAddress."
+                  "deployment would never start. If Azure reports SubscriptionNotRegisteredForFeature, " +
+                  "run 'az feature register --namespace Microsoft.Network --name " +
+                  "AllowBringYourOwnPublicIpAddress', wait for Registered, then run " +
+                  "'az provider register --namespace Microsoft.Network --wait'."
         }
 
         az network nat gateway create -n "natgw-$NamePrefix" -g $ResourceGroup -l $Location `
@@ -240,26 +274,42 @@ try {
         az network vnet subnet update -n 'snet-infra' -g $ResourceGroup --vnet-name $vnetName `
             --nat-gateway "natgw-$NamePrefix" --only-show-errors | Out-Null
 
-        # One endpoint per sub-resource: 'file' carries the token cache mount, 'table' the journal.
-        foreach ($group in 'file', 'table') {
+        # Table is always private. File is only needed when the token cache is mounted.
+        $privateEndpointGroups = if ($useStateVolume) { 'file', 'table' } else { @('table') }
+        foreach ($group in $privateEndpointGroups) {
             Write-Host "  private endpoint for $group" -ForegroundColor DarkGray
             $zone = "privatelink.$group.core.windows.net"
 
-            az network private-dns zone create -g $ResourceGroup -n $zone --only-show-errors | Out-Null
-            az network private-dns link vnet create -g $ResourceGroup -n "link-$group" `
-                --zone-name $zone --virtual-network $vnetName --registration-enabled false `
-                --only-show-errors | Out-Null
+            if (-not (az network private-dns zone show -g $ResourceGroup -n $zone `
+                    --only-show-errors 2>$null)) {
+                az network private-dns zone create -g $ResourceGroup -n $zone `
+                    --only-show-errors | Out-Null
+            }
 
-            az network private-endpoint create -n "pe-$NamePrefix-$group" -g $ResourceGroup -l $Location `
-                --vnet-name $vnetName --subnet 'snet-pe' `
-                --private-connection-resource-id $storageId --group-id $group `
-                --connection-name "conn-$group" --only-show-errors | Out-Null
+            if (-not (az network private-dns link vnet show -g $ResourceGroup `
+                    --zone-name $zone -n "link-$group" --only-show-errors 2>$null)) {
+                az network private-dns link vnet create -g $ResourceGroup -n "link-$group" `
+                    --zone-name $zone --virtual-network $vnetName --registration-enabled false `
+                    --only-show-errors | Out-Null
+            }
+
+            if (-not (az network private-endpoint show -n "pe-$NamePrefix-$group" `
+                    -g $ResourceGroup --only-show-errors 2>$null)) {
+                az network private-endpoint create -n "pe-$NamePrefix-$group" `
+                    -g $ResourceGroup -l $Location --vnet-name $vnetName --subnet 'snet-pe' `
+                    --private-connection-resource-id $storageId --group-id $group `
+                    --connection-name "conn-$group" --only-show-errors | Out-Null
+            }
 
             # Without the zone group the endpoint exists but nothing resolves to it, and every call
             # keeps going to the blocked public endpoint.
-            az network private-endpoint dns-zone-group create -g $ResourceGroup `
-                --endpoint-name "pe-$NamePrefix-$group" -n 'default' `
-                --private-dns-zone $zone --zone-name $group --only-show-errors | Out-Null
+            if (-not (az network private-endpoint dns-zone-group show -g $ResourceGroup `
+                    --endpoint-name "pe-$NamePrefix-$group" -n 'default' `
+                    --only-show-errors 2>$null)) {
+                az network private-endpoint dns-zone-group create -g $ResourceGroup `
+                    --endpoint-name "pe-$NamePrefix-$group" -n 'default' `
+                    --private-dns-zone $zone --zone-name $group --only-show-errors | Out-Null
+            }
         }
     }
 
@@ -268,6 +318,36 @@ try {
     # VNet membership is immutable on an environment, so switching -PrivateNetworking on or off
     # means replacing it rather than updating it.
     $existingEnv = az containerapp env show -n $envName -g $ResourceGroup --only-show-errors 2>$null
+    $logsWorkspaceId = $null
+    $logsWorkspaceName = $null
+
+    # Reuse the environment's workspace before deleting the environment. Without this, every
+    # recreation silently creates another randomly named workspace and leaves the old one behind.
+    if ($existingEnv) {
+        $existingEnvConfig = $existingEnv | ConvertFrom-Json
+        $logsWorkspaceId =
+            $existingEnvConfig.properties.appLogsConfiguration.logAnalyticsConfiguration.customerId
+        if ($logsWorkspaceId) {
+            $logsWorkspaceName = az monitor log-analytics workspace list -g $ResourceGroup `
+                --query "[?customerId=='$logsWorkspaceId'].name | [0]" -o tsv --only-show-errors
+        }
+    }
+
+    if (-not $logsWorkspaceName) {
+        $logsWorkspaceName = "log-$NamePrefix"
+        az monitor log-analytics workspace create -n $logsWorkspaceName -g $ResourceGroup `
+            -l $Location --only-show-errors | Out-Null
+        $logsWorkspaceId = az monitor log-analytics workspace show -n $logsWorkspaceName `
+            -g $ResourceGroup --query customerId -o tsv --only-show-errors
+    }
+
+    $logsWorkspaceKey = az monitor log-analytics workspace get-shared-keys `
+        -n $logsWorkspaceName -g $ResourceGroup --query primarySharedKey -o tsv --only-show-errors
+
+    if (-not $logsWorkspaceId -or -not $logsWorkspaceKey) {
+        throw "Could not resolve Log Analytics workspace $logsWorkspaceName."
+    }
+
     if ($existingEnv) {
         $currentSubnet = az containerapp env show -n $envName -g $ResourceGroup `
             --query 'properties.vnetConfiguration.infrastructureSubnetId' -o tsv --only-show-errors
@@ -303,10 +383,14 @@ try {
 
     if ($PrivateNetworking) {
         az containerapp env create -n $envName -g $ResourceGroup -l $Location `
-            --infrastructure-subnet-resource-id $infraSubnetId --only-show-errors | Out-Null
+            --infrastructure-subnet-resource-id $infraSubnetId `
+            --logs-workspace-id $logsWorkspaceId --logs-workspace-key $logsWorkspaceKey `
+            --only-show-errors | Out-Null
     }
     else {
-        az containerapp env create -n $envName -g $ResourceGroup -l $Location --only-show-errors | Out-Null
+        az containerapp env create -n $envName -g $ResourceGroup -l $Location `
+            --logs-workspace-id $logsWorkspaceId --logs-workspace-key $logsWorkspaceKey `
+            --only-show-errors | Out-Null
     }
 
     # az reports failures on stderr and a non-zero exit code, neither of which stops a PowerShell
@@ -316,16 +400,17 @@ try {
         throw "Environment $envName was not created. Re-run; the error above says why."
     }
 
-    if ($PrivateNetworking) {
+    if ($useStateVolume) {
         az containerapp env storage set -n $envName -g $ResourceGroup `
             --storage-name statestore `
             --azure-file-account-name $stName `
             --azure-file-account-key $storageKey `
             --azure-file-share-name $shareName `
             --access-mode ReadWrite --only-show-errors | Out-Null
+    }
 
-        # Now that everything reaches the account privately, close the public door. Done after the
-        # share is wired up, because that call itself goes over the public endpoint.
+    if ($PrivateNetworking) {
+        # Now that everything reaches the account privately, close the public door.
         Write-Host 'Closing public network access to storage...' -ForegroundColor Cyan
         az storage account update -n $stName -g $ResourceGroup `
             --public-network-access Disabled --only-show-errors | Out-Null
@@ -363,21 +448,19 @@ try {
 
     # Where the journal and the token cache go depends on whether storage is reachable at all.
     #
-    # With private networking the app writes the journal table with its managed identity and mounts
-    # the file share for the token cache. Without it the account's public endpoint is usually closed
-    # by policy, so the share cannot be mounted - and a volume pointing at an unreachable share does
-    # not degrade gracefully, it puts the container into CrashLoopBackOff with no log output at all.
-    # So in that mode nothing is mounted and state is container-local and disposable: the journal is
-    # SQLite on /tmp, and the users are re-enrolled by ROPC after every restart.
+    # Private networking always gives the app a durable Azure Table journal. The token cache uses
+    # Azure Files only when shared-key auth is permitted; otherwise it stays on local disk and ROPC
+    # re-enrols users after a restart. Without private networking both journal and cache are local.
     if ($PrivateNetworking) {
-        $statePath  = '/app/.state'
+        $statePath = if ($useStateVolume) { '/app/.state' } else { '/tmp' }
         $journalEnv = @"
           - name: TENANTPULSE_TenantPulse__Simulation__JournalTable__Endpoint
             value: https://$stName.table.core.windows.net
           - name: TENANTPULSE_TenantPulse__Simulation__JournalTable__TableName
             value: $tableName
 "@
-        $volumeYaml = @"
+        $volumeYaml = if ($useStateVolume) {
+@"
         volumeMounts:
           - volumeName: state
             mountPath: /app/.state
@@ -386,6 +469,10 @@ try {
         storageType: AzureFile
         storageName: statestore
 "@
+        }
+        else {
+            ''
+        }
     }
     else {
         $statePath  = '/tmp'
@@ -515,6 +602,57 @@ $volumeYaml
         }
     }
 
+    # A successful ARM update only means the revision was accepted. Image pulls, volume mounts,
+    # managed-identity propagation and application startup happen afterwards. Do not report success
+    # until exactly one replica is ready; otherwise a VolumeMountFailure looks like a deployment.
+    Write-Host 'Waiting for one ready replica...' -ForegroundColor Cyan
+    $readyDeadline = (Get-Date).AddMinutes(15)
+    $ready = $false
+    $latestRevision = $null
+
+    while ((Get-Date) -lt $readyDeadline) {
+        $appStateRaw = az containerapp show -n $appName -g $ResourceGroup `
+            --only-show-errors 2>$null
+
+        if ($appStateRaw) {
+            $appState = $appStateRaw | ConvertFrom-Json
+            $latestRevision = $appState.properties.latestRevisionName
+
+            if ($latestRevision -and
+                $appState.properties.latestReadyRevisionName -eq $latestRevision -and
+                $appState.properties.runningStatus -eq 'Running') {
+                $replicaRaw = az containerapp replica list -n $appName -g $ResourceGroup `
+                    --revision $latestRevision --only-show-errors 2>$null
+
+                if ($replicaRaw) {
+                    $replicas = @($replicaRaw | ConvertFrom-Json)
+                    $containers = @($replicas | ForEach-Object { $_.properties.containers })
+                    $ready = $replicas.Count -eq 1 -and
+                             $containers.Count -gt 0 -and
+                             @($containers | Where-Object { -not $_.ready }).Count -eq 0
+                }
+            }
+        }
+
+        if ($ready) { break }
+        Start-Sleep -Seconds 15
+    }
+
+    if (-not $ready) {
+        Write-Host ''
+        Write-Host '  Recent Container Apps system events:' -ForegroundColor Yellow
+        $eventRaw = az containerapp logs show -n $appName -g $ResourceGroup `
+            --type system --tail 20 --format json --only-show-errors 2>$null
+        if ($eventRaw) {
+            @($eventRaw | ConvertFrom-Json) |
+                Select-Object -Last 8 |
+                ForEach-Object { Write-Host "    $($_.Type) $($_.Reason): $($_.Msg)" }
+        }
+
+        throw "Container app $appName did not reach one ready replica within 15 minutes. " +
+              "Latest revision: $latestRevision."
+    }
+
     Write-Host ''
     Write-Host ('-' * 62)
     Write-Host 'Deployed.' -ForegroundColor Green
@@ -524,7 +662,13 @@ $volumeYaml
     Write-Host ''
 
     if ($PrivateNetworking) {
-        Write-Host '  Kill switch     ' -NoNewline; Write-Host "upload a file named STOP to the $shareName share"
+        Write-Host '  Kill switch     ' -NoNewline
+        if ($useStateVolume) {
+            Write-Host "upload a file named STOP to the $shareName share"
+        }
+        else {
+            Write-Host 'scale to zero; the token cache and STOP file are container-local'
+        }
         Write-Host '  What it has done' -NoNewline; Write-Host "  tenant-pulse report --since 7 --recent 20"
         Write-Host '  Clean the tenant' -NoNewline; Write-Host "  tenant-pulse purge --since 30 --live"
         Write-Host ''
@@ -533,6 +677,11 @@ $volumeYaml
         Write-Host '  and the Storage Table Data Reader role. Point them at it with:'
         Write-Host ''
         Write-Host "    `$env:TENANTPULSE_TenantPulse__Simulation__JournalTable__Endpoint = 'https://$stName.table.core.windows.net'"
+        if (-not $useStateVolume) {
+            Write-Host ''
+            Write-Host '  NOTE: storage policy disables shared-key auth, so Azure Files is not mounted.'
+            Write-Host '  The Table journal is durable; token caches are rebuilt with ROPC after restart.'
+        }
     }
     else {
         Write-Host '  Kill switch     ' -NoNewline; Write-Host "scale to zero (above). There is no mounted share to drop a STOP file on."

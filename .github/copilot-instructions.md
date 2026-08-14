@@ -6,7 +6,8 @@ meetings and Copilot prompts, generated continuously from persona + storyline mo
 **as each user** through Microsoft Graph.
 
 It is **not** a load test. Realism beats throughput. See `AGENTS.md` for full orientation,
-`docs/auth.md`, `docs/copilot.md`, `docs/storylines.md` for the deep detail.
+`docs/auth.md`, `docs/copilot.md`, `docs/storylines.md`, and `docs/azure-deployment.md` for the deep
+detail.
 
 ## Invariants you must never break
 
@@ -26,7 +27,8 @@ dotnet test TenantPulse.Tests/TenantPulse.Tests.csproj
 ```
 
 `TreatWarningsAsErrors=true` + `EnforceCodeStyleInBuild=true` — any warning fails the build; fix it,
-never suppress. Tests need no tenant/network/credentials (41, all green).
+never suppress. Tests need no tenant/network/credentials (54 total; 7 Azure Table tests skip unless
+Azurite is running).
 
 No-tenant end-to-end check:
 `dotnet run --project src/TenantPulse.Cli -- plan --offline --sample-content 6`
@@ -42,7 +44,7 @@ Entra directory → GraphPersonaDirectory → Persona[] ────┴→ DayPl
                                                               ↓
                                     PulseEngine → SafetyGovernor → IActivityExecutor
                                                               ↓          ↑ IContentGenerator
-                                                     Graph (delegated) → SQLite journal
+                                                     Graph (delegated) → SQLite / Azure Table journal
 ```
 
 ## Decisions not to casually reverse
@@ -72,6 +74,16 @@ Entra directory → GraphPersonaDirectory → Persona[] ────┴→ DayPl
   Never `new Random()`.
 - **Secrets**: `config/tenant-pulse.json`, `.state/`, `*.db` are gitignored. Never commit a password,
   token cache or real tenant id with credentials.
+- **Hosted deployments use Azure Table for the durable activity journal.** In governed
+  subscriptions that force `allowSharedKeyAccess=false`, Azure Files SMB mounts fail with
+  `VolumeMountFailure`; keep token caches on `/tmp` and let ROPC re-enrol after restart.
+- **Private Container Apps environments require NAT egress.** Confirm
+  `Microsoft.Network/AllowBringYourOwnPublicIpAddress` is registered before replacing an
+  environment. ARM template validation alone does not catch that subscription feature gate.
+- **Never treat an accepted Container App revision as a successful deployment.** Wait for one ready
+  replica and inspect `--type system` logs for image-pull or volume-mount failures.
+- **Reuse the Log Analytics workspace when recreating an environment.** Azure otherwise creates a
+  random workspace and leaves the previous one orphaned.
 - **A misconfigured Azure OpenAI must never break read-only commands** — `AddContentGeneration`
   try-constructs and falls back to templates (this was a real crash in `plan`/`doctor`).
 - **`NSubstitute` is pinned to 6.1.0** — 6.2.0 isn't on the internal NuGet feed.
