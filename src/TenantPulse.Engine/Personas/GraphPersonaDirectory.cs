@@ -249,6 +249,14 @@ public sealed class GraphPersonaDirectory(
             return true;
         }
 
+        // An explicit opt-in beats the heuristic below, but never the domain allow-list above:
+        // that one is a safety boundary, this one is only about tidiness.
+        if (options.Tenant.AlwaysIncludeUsers.Any(u =>
+                string.Equals(u, persona.UserPrincipalName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
         // Admin/service accounts shouldn't be part of the simulated workforce: their activity looks
         // wrong in reports and they're often the account an operator is using interactively.
         string[] adminMarkers = ["admin", "svc", "service", "sync", "breakglass", "noreply", "no-reply"];

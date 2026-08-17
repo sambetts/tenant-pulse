@@ -16,6 +16,8 @@
       "AllowedDomains": [
         "M365x000000.onmicrosoft.com"
       ],
+      "//AlwaysIncludeUsers": "UPNs that join the simulated workforce even though they look like admin or service accounts. Anything containing admin, svc, service, sync, breakglass or noreply is excluded by default; list one here if you demo as it and want its mailbox to look used. Does not override AllowedDomains.",
+      "AlwaysIncludeUsers": [],
       "//ClientId": "Application (client) id of a PUBLIC CLIENT Entra app registration in the demo tenant.",
       "ClientId": "00000000-0000-0000-0000-000000000000"
     },

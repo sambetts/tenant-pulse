@@ -103,6 +103,13 @@
 .PARAMETER AdminPort
     Port the admin web listens on, and the ingress target port. Default 8080.
 
+.PARAMETER AlwaysIncludeUsers
+    UPNs that join the simulated workforce even though they look like admin or service accounts.
+    Anything containing admin, svc, service, sync, breakglass or noreply is excluded by default,
+    because its activity looks wrong in reports and it is usually the operator's own account. List
+    one here when you demo as it and want its mailbox to look used. It does not override the domain
+    allow-list, which is a safety boundary rather than a tidiness one.
+
 .EXAMPLE
     ./scripts/deploy-azure.ps1 -TenantId <guid> -ClientId <guid> -Domain contoso.onmicrosoft.com `
         -DirectoryReader user@contoso.onmicrosoft.com
@@ -144,6 +151,8 @@ param(
 
     [switch] $AdminWeb,
     [int] $AdminPort = 8080,
+
+    [string[]] $AlwaysIncludeUsers = @(),
 
     [string] $Tag = "v$(Get-Date -Format 'yyyyMMddHHmm')"
 )
@@ -542,6 +551,14 @@ $contentAuthEnv
         $volumeYaml = ''
     }
 
+    # Indexed environment variables are how the configuration binder reads a list, so the block has
+    # to be generated rather than written inline.
+    $includeEnv = ($AlwaysIncludeUsers | ForEach-Object -Begin { $i = 0 } -Process {
+        $line = "          - name: TENANTPULSE_TenantPulse__Tenant__AlwaysIncludeUsers__$i`n            value: '$_'"
+        $i++
+        $line
+    }) -join "`n"
+
     $yaml = @"
 location: $Location
 name: $appName
@@ -584,6 +601,7 @@ properties:
             value: $TenantId
           - name: TENANTPULSE_TenantPulse__Tenant__AllowedDomains__0
             value: $Domain
+$includeEnv
           - name: TENANTPULSE_TenantPulse__Tenant__ClientId
             value: $ClientId
           - name: TENANTPULSE_TenantPulse__Auth__Mode

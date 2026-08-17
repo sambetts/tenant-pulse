@@ -63,6 +63,21 @@ public sealed class TenantOptions
     /// </summary>
     public List<string> AllowedDomains { get; set; } = [];
 
+    /// <summary>
+    /// UPNs that join the simulated workforce even though they look like admin or service accounts.
+    /// <para>
+    /// Accounts whose name contains admin, svc, service, sync, breakglass or noreply are excluded by
+    /// default: their activity looks wrong in reports, and one of them is usually the account the
+    /// operator is signed in with. That default is right until you demo <em>as</em> one of them, at
+    /// which point an empty mailbox is exactly the problem this tool exists to solve.
+    /// </para>
+    /// <para>
+    /// This does not override <see cref="AllowedDomains"/>, which is a safety boundary rather than
+    /// a tidiness one.
+    /// </para>
+    /// </summary>
+    public List<string> AlwaysIncludeUsers { get; set; } = [];
+
     /// <summary>Entra app registration (public client) used for delegated user tokens.</summary>
     public string ClientId { get; set; } = string.Empty;
 

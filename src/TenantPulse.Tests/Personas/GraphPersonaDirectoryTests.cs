@@ -63,6 +63,18 @@ public class GraphPersonaDirectoryTests
             new TenantPulseOptions { Tenant = { AllowedDomains = ["demo.onmicrosoft.com"] } },
             NullLogger<GraphPersonaDirectory>.Instance);
 
+    private static GraphPersonaDirectory Create(IGraphClient graph, params string[] alwaysInclude) =>
+        new(graph,
+            new TenantPulseOptions
+            {
+                Tenant =
+                {
+                    AllowedDomains = ["demo.onmicrosoft.com"],
+                    AlwaysIncludeUsers = [.. alwaysInclude]
+                }
+            },
+            NullLogger<GraphPersonaDirectory>.Instance);
+
     private static IGraphClient Graph(IReadOnlyList<JsonElement> users, IReadOnlyList<JsonElement>? skus = null)
     {
         var graph = Substitute.For<IGraphClient>();
@@ -88,6 +100,52 @@ public class GraphPersonaDirectoryTests
         var personas = await Create(graph).LoadAsync(Reader, TestContext.Current.CancellationToken);
 
         personas.Select(p => p.DisplayName).Should().BeEquivalentTo("Cora Thomas");
+    }
+
+    [Fact]
+    public async Task Admin_and_service_accounts_are_excluded_by_default()
+    {
+        var graph = Graph(Users(
+            User("1", "cora@demo.onmicrosoft.com", "Cora Thomas"),
+            User("2", "admin@demo.onmicrosoft.com", "Tenant Admin"),
+            User("3", "svc-backup@demo.onmicrosoft.com", "Backup Service")));
+
+        var personas = await Create(graph).LoadAsync(Reader, TestContext.Current.CancellationToken);
+
+        personas.Where(p => !p.Excluded).Select(p => p.DisplayName)
+            .Should().BeEquivalentTo("Cora Thomas");
+    }
+
+    [Fact]
+    public async Task An_explicitly_included_admin_account_joins_the_workforce()
+    {
+        // Demoing as the admin account is a real case, and an empty mailbox is exactly the problem
+        // this tool exists to solve.
+        var graph = Graph(Users(
+            User("1", "cora@demo.onmicrosoft.com", "Cora Thomas"),
+            User("2", "admin@demo.onmicrosoft.com", "Tenant Admin"),
+            User("3", "svc-backup@demo.onmicrosoft.com", "Backup Service")));
+
+        var personas = await Create(graph, "ADMIN@demo.onmicrosoft.com")
+            .LoadAsync(Reader, TestContext.Current.CancellationToken);
+
+        personas.Where(p => !p.Excluded).Select(p => p.DisplayName)
+            .Should().BeEquivalentTo("Cora Thomas", "Tenant Admin");
+    }
+
+    [Fact]
+    public async Task Explicit_inclusion_never_defeats_the_domain_allow_list()
+    {
+        // The domain list is a safety boundary; the admin heuristic is only tidiness.
+        var graph = Graph(Users(
+            User("1", "cora@demo.onmicrosoft.com", "Cora Thomas"),
+            User("2", "admin@elsewhere.onmicrosoft.com", "Foreign Admin")));
+
+        var personas = await Create(graph, "admin@elsewhere.onmicrosoft.com")
+            .LoadAsync(Reader, TestContext.Current.CancellationToken);
+
+        personas.Where(p => !p.Excluded).Select(p => p.DisplayName)
+            .Should().BeEquivalentTo("Cora Thomas");
     }
 
     [Fact]
