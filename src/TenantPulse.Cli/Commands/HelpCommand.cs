@@ -29,6 +29,12 @@ internal static class HelpCommand
                                 DRY RUN unless --live is given.
                     --live              Actually write to the tenant.
                     --as <upn>          User whose token reads the directory.
+                    --admin             Serve the admin web (stats, creation rate, manual
+                                        generation). Hosted in this process because the
+                                        simulator is single-writer. Put authentication in
+                                        front of it before exposing it.
+                    --admin-port <n>    Port for the admin web (default 8080).
+                    --no-admin          Never serve it, whatever the config says.
 
               once              Execute a small batch immediately, ignoring scheduled times.
                                 Useful to prove the pipeline end to end.

@@ -92,6 +92,17 @@
     Tenant-wide safety ceiling. Overflow is rejected as skipped activity rather than queued, so this
     also needs raising alongside ActivityIntensity.
 
+.PARAMETER AdminWeb
+    Serve the admin web (stats, creation rate, manual generation) from inside the run process, and
+    put Container Apps' built-in Entra authentication in front of it. The app itself has no
+    authentication, so ingress is only ever enabled together with that.
+
+    It is in-process because the simulator is single-writer: a separate service able to trigger
+    activity would double-post into the tenant and race the journal.
+
+.PARAMETER AdminPort
+    Port the admin web listens on, and the ingress target port. Default 8080.
+
 .EXAMPLE
     ./scripts/deploy-azure.ps1 -TenantId <guid> -ClientId <guid> -Domain contoso.onmicrosoft.com `
         -DirectoryReader user@contoso.onmicrosoft.com
@@ -130,6 +141,9 @@ param(
     [double] $ActivityIntensity = 1.0,
     [int] $MaxActivitiesPerUserPerDay = 14,
     [int] $MaxActivitiesPerTenantPerHour = 60,
+
+    [switch] $AdminWeb,
+    [int] $AdminPort = 8080,
 
     [string] $Tag = "v$(Get-Date -Format 'yyyyMMddHHmm')"
 )
@@ -589,6 +603,10 @@ $journalEnv
             value: '$MaxActivitiesPerUserPerDay'
           - name: TENANTPULSE_TenantPulse__Limits__MaxActivitiesPerTenantPerHour
             value: '$MaxActivitiesPerTenantPerHour'
+          - name: TENANTPULSE_TenantPulse__Admin__Enabled
+            value: '$($AdminWeb.IsPresent.ToString().ToLowerInvariant())'
+          - name: TENANTPULSE_TenantPulse__Admin__Port
+            value: '$AdminPort'
           - name: TENANTPULSE_TenantPulse__Content__CompanyName
             value: '$CompanyName'
           - name: TENANTPULSE_TenantPulse__Content__CompanyIndustry
@@ -673,10 +691,71 @@ $volumeYaml
         }
     }
 
+    # The admin web has no authentication of its own, so ingress and Entra authentication are
+    # configured as one step. Doing them separately would leave a control plane that can write to
+    # the tenant briefly open to the internet.
+    if ($AdminWeb) {
+        Write-Host 'Publishing the admin web...' -ForegroundColor Cyan
+
+        $fqdn = az containerapp ingress enable -n $appName -g $ResourceGroup `
+            --type external --target-port $AdminPort --transport auto `
+            --query fqdn -o tsv --only-show-errors
+        if ($LASTEXITCODE -ne 0 -or -not $fqdn) { throw 'Enabling ingress for the admin web failed.' }
+
+        $redirectUri = "https://$fqdn/.auth/login/aad/callback"
+        $adminAppName = "$appName-admin"
+
+        $adminAppId = az ad app list --display-name $adminAppName --query '[0].appId' -o tsv --only-show-errors 2>$null
+
+        if ($adminAppId) {
+            az ad app update --id $adminAppId --web-redirect-uris $redirectUri --only-show-errors | Out-Null
+        }
+        else {
+            $adminAppId = az ad app create --display-name $adminAppName `
+                --sign-in-audience AzureADMyOrg `
+                --web-redirect-uris $redirectUri `
+                --enable-id-token-issuance true `
+                --query appId -o tsv --only-show-errors
+            if ($LASTEXITCODE -ne 0 -or -not $adminAppId) { throw 'Creating the admin app registration failed.' }
+        }
+
+        if (-not (az ad sp list --filter "appId eq '$adminAppId'" --query '[0].id' -o tsv --only-show-errors 2>$null)) {
+            az ad sp create --id $adminAppId --only-show-errors 2>$null | Out-Null
+        }
+
+        $adminSecret = az ad app credential reset --id $adminAppId `
+            --display-name 'containerapp-easyauth' --years 2 `
+            --query password -o tsv --only-show-errors
+        if ($LASTEXITCODE -ne 0 -or -not $adminSecret) { throw 'Creating the admin client secret failed.' }
+
+        az containerapp secret set -n $appName -g $ResourceGroup `
+            --secrets "easyauth-secret=$adminSecret" --only-show-errors | Out-Null
+
+        az containerapp auth microsoft update -n $appName -g $ResourceGroup `
+            --client-id $adminAppId `
+            --client-secret-name 'easyauth-secret' `
+            --issuer "https://login.microsoftonline.com/$TenantId/v2.0" `
+            --yes --only-show-errors | Out-Null
+
+        az containerapp auth update -n $appName -g $ResourceGroup `
+            --enabled true `
+            --unauthenticated-client-action RedirectToLoginPage `
+            --redirect-provider azureactivedirectory `
+            --only-show-errors | Out-Null
+
+        # Never report an admin web as published without proving it refuses anonymous callers.
+        $anonymous = az containerapp auth show -n $appName -g $ResourceGroup `
+            --query 'globalValidation.unauthenticatedClientAction' -o tsv --only-show-errors
+        if ($anonymous -ne 'RedirectToLoginPage') {
+            throw "Admin web ingress is open but authentication is '$anonymous'. Disable ingress until this is fixed."
+        }
+
+        Write-Host "  https://$fqdn" -ForegroundColor Green
+    }
+
     # A successful ARM update only means the revision was accepted. Image pulls, volume mounts,
     # managed-identity propagation and application startup happen afterwards. Do not report success
-    # until exactly one replica is ready; otherwise a VolumeMountFailure looks like a deployment.
-    Write-Host 'Waiting for one ready replica...' -ForegroundColor Cyan
+    # until exactly one replica is ready; otherwise a VolumeMountFailure looks like a deployment.    Write-Host 'Waiting for one ready replica...' -ForegroundColor Cyan
     $readyDeadline = (Get-Date).AddMinutes(15)
     $ready = $false
     $latestRevision = $null

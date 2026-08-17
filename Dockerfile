@@ -27,7 +27,10 @@ RUN dotnet publish TenantPulse.Cli/TenantPulse.Cli.csproj \
         --no-restore \
         /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+# The ASP.NET Core runtime, not the plain one: 'run' hosts the admin web in-process, so the app
+# carries a FrameworkReference to Microsoft.AspNetCore.App. On dotnet/runtime the container starts
+# and dies immediately with "No frameworks were found", which reads like a broken image.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
 # Never run as root: the mounted state volume holds refresh tokens.

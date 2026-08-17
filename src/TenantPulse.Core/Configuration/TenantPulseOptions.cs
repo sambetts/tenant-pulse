@@ -20,6 +20,29 @@ public sealed class TenantPulseOptions
     public CopilotOptions Copilot { get; set; } = new();
 
     public WorkloadOptions Workloads { get; set; } = new();
+
+    public AdminOptions Admin { get; set; } = new();
+}
+
+/// <summary>
+/// The admin web hosted inside <c>run</c>.
+/// <para>
+/// It lives in that process because the simulator is single-writer: a separate service able to
+/// trigger activity would double-post into the tenant and race the journal. There is no
+/// authentication here by design — the hosted deployment puts Container Apps' built-in Entra
+/// authentication in front of it, which is a far better answer for a control plane that can write
+/// to a tenant than anything this would hand-roll.
+/// </para>
+/// </summary>
+public sealed class AdminOptions
+{
+    /// <summary>
+    /// Off by default. A local <c>run</c> should not open a port nobody asked for, and the hosted
+    /// deployment turns it on explicitly once authentication is in front of it.
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    public int Port { get; set; } = 8080;
 }
 
 public sealed class TenantOptions

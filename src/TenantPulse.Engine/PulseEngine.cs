@@ -33,6 +33,18 @@ public sealed class PulseEngine(
     private readonly Dictionary<ActivityKind, IActivityExecutor> _executors =
         executors.ToDictionary(e => e.Kind);
 
+    /// <summary>
+    /// Serialises every activity through one gate.
+    /// <para>
+    /// The simulator is single-writer by design, and the admin surface runs inside this same
+    /// process precisely so that stays true. But it can still ask for a manual batch while the
+    /// scheduled loop is mid-activity, and two concurrent executions would race the journal's
+    /// already-executed check and double-post into the tenant. One at a time costs nothing here:
+    /// both callers were sequential anyway.
+    /// </para>
+    /// </summary>
+    private readonly SemaphoreSlim _executionGate = new(1, 1);
+
     /// <summary>Plans a day without executing anything. Used by the <c>plan</c> command.</summary>
     public IReadOnlyList<ActivityIntent> PlanDay(
         DateOnly date,
@@ -176,6 +188,22 @@ public sealed class PulseEngine(
     }
 
     private async Task<ActivityResult> ExecuteAsync(
+        ActivityIntent intent,
+        ExecContext context,
+        CancellationToken cancellationToken)
+    {
+        await _executionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ExecuteCoreAsync(intent, context, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _executionGate.Release();
+        }
+    }
+
+    private async Task<ActivityResult> ExecuteCoreAsync(
         ActivityIntent intent,
         ExecContext context,
         CancellationToken cancellationToken)

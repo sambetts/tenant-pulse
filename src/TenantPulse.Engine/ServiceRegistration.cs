@@ -9,6 +9,7 @@ using TenantPulse.Core.Safety;
 using TenantPulse.Core.Time;
 using TenantPulse.Engine.Activities;
 using TenantPulse.Engine.Auth;
+using TenantPulse.Engine.Configuration;
 using TenantPulse.Engine.Content;
 using TenantPulse.Engine.Copilot;
 using TenantPulse.Engine.Graph;
@@ -47,6 +48,7 @@ public static class ServiceRegistration
         services.AddSingleton<GraphPersonaDirectory>();
         services.AddSingleton<CopilotUsageVerifier>();
         services.AddSingleton<ActivityEventLog>();
+        services.AddSingleton<IRuntimeSettingsStore, RuntimeSettingsStore>();
         services.AddSingleton<PulseEngine>();
 
         AddContentGeneration(services, options);

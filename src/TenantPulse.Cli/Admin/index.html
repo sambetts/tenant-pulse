@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tenant-pulse admin</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e9ef;
+    --muted: #8b93a5; --accent: #4c8dff; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 12px; font-weight: 600; color: var(--muted);
+       text-transform: uppercase; letter-spacing: .06em; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 24px; display: grid; gap: 20px; max-width: 1500px; }
+  .row { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; }
+  .tile { background: #10131a; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .tile .n { font-size: 24px; font-weight: 600; }
+  .tile .l { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px;
+       border-bottom: 1px solid var(--line); font-size: 12px; }
+  td { padding: 6px 8px; border-bottom: 1px solid #1e222b; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+  input, select, button {
+    font: inherit; background: #10131a; color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; width: 100%;
+  }
+  button {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    font-weight: 600; cursor: pointer; margin-top: 14px;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  button:disabled { opacity: .55; cursor: progress; }
+  button.secondary { background: transparent; color: var(--text); border-color: var(--line); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .pill { padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .Executed { background: rgba(63,185,80,.15); color: var(--ok); }
+  .Skipped  { background: rgba(210,153,34,.15); color: var(--warn); }
+  .Failed   { background: rgba(248,81,73,.15); color: var(--bad); }
+  .Simulated{ background: rgba(76,141,255,.15); color: var(--accent); }
+  .note { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .bad { color: var(--bad); }
+  .ok { color: var(--ok); }
+  a { color: var(--accent); }
+  .toolbar { display: flex; gap: 10px; align-items: end; margin-bottom: 14px; flex-wrap: wrap; }
+  .toolbar > div { flex: 1 1 130px; }
+  .toolbar label { margin-top: 0; }
+  .scroll { max-height: 460px; overflow: auto; }
+  code { background: #10131a; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>tenant-pulse</h1>
+  <span class="sub" id="header-sub">connecting...</span>
+</header>
+
+<main>
+  <div class="panel">
+    <h2>Today</h2>
+    <div class="tiles" id="health-tiles"></div>
+    <div class="note" id="health-note"></div>
+  </div>
+
+  <div class="row">
+    <div class="panel">
+      <h2>Creation rate</h2>
+      <label for="intensity">Activity intensity &mdash; 1.0 is the default hum</label>
+      <input id="intensity" type="number" min="0.1" max="20" step="0.1">
+      <div class="grid2">
+        <div>
+          <label for="perUser">Max per user / day</label>
+          <input id="perUser" type="number" min="1" max="500" step="1">
+        </div>
+        <div>
+          <label for="perHour">Max per tenant / hour</label>
+          <input id="perHour" type="number" min="1" max="5000" step="1">
+        </div>
+      </div>
+      <button id="save-config">Apply</button>
+      <div class="note" id="config-note"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Generate now</h2>
+      <label for="run-user">User</label>
+      <select id="run-user"><option value="">Anyone</option></select>
+      <div class="grid2">
+        <div>
+          <label for="run-kind">Activity</label>
+          <select id="run-kind"><option value="">Any</option></select>
+        </div>
+        <div>
+          <label for="run-count">How many</label>
+          <input id="run-count" type="number" min="1" max="25" step="1" value="3">
+        </div>
+      </div>
+      <button id="run-now">Generate</button>
+      <div class="note" id="run-note">Runs immediately through the engine, so it appears in the
+        journal and the workbook like scheduled activity.</div>
+      <div id="run-results"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Activity</h2>
+    <div class="toolbar">
+      <div>
+        <label for="f-since">Window</label>
+        <select id="f-since">
+          <option value="1">Last 24 hours</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+      </div>
+      <div>
+        <label for="f-persona">User</label>
+        <select id="f-persona"><option value="">Everyone</option></select>
+      </div>
+      <div>
+        <label for="f-kind">Activity</label>
+        <select id="f-kind"><option value="">Any</option></select>
+      </div>
+      <div>
+        <label for="f-outcome">Outcome</label>
+        <select id="f-outcome">
+          <option value="">Any</option>
+          <option>Executed</option><option>Skipped</option>
+          <option>Failed</option><option>Simulated</option>
+        </select>
+      </div>
+      <div style="flex:0 0 auto">
+        <button class="secondary" id="refresh" style="margin-top:0">Refresh</button>
+      </div>
+    </div>
+    <div class="tiles" id="stat-tiles"></div>
+    <div class="scroll" style="margin-top:16px"><table id="activity"></table></div>
+  </div>
+
+  <div class="row">
+    <div class="panel">
+      <h2>By user</h2>
+      <div class="scroll"><table id="by-actor"></table></div>
+    </div>
+    <div class="panel">
+      <h2>By activity</h2>
+      <div class="scroll"><table id="by-kind"></table></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function api(path, options) {
+  const response = await fetch(path, {
+    headers: { 'content-type': 'application/json' }, ...options
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!response.ok) throw new Error(body?.error || response.statusText);
+  return body;
+}
+
+const when = iso => {
+  const d = new Date(iso);
+  return d.toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+function tiles(target, items) {
+  $(target).innerHTML = items.map(([label, value, cls]) =>
+    `<div class="tile"><div class="n ${cls || ''}">${esc(value)}</div><div class="l">${esc(label)}</div></div>`
+  ).join('');
+}
+
+async function loadHealth() {
+  try {
+    const h = await api('/api/health');
+    tiles('health-tiles', [
+      ['Planned today', h.plannedToday],
+      ['Users', h.personas],
+      ['Storylines', h.storylines],
+      ['Mode', h.dryRun ? 'DRY RUN' : 'LIVE', h.dryRun ? 'bad' : 'ok']
+    ]);
+    $('header-sub').textContent = h.tenantId;
+    $('health-note').innerHTML = h.killSwitch
+      ? '<span class="bad">Kill switch present &mdash; the simulator is stopped.</span>'
+      : h.nextDueUtc
+        ? `Next: ${esc(h.nextKind)} by ${esc(h.nextPersona)} at ${esc(when(h.nextDueUtc))}.`
+        : 'Nothing further scheduled today.';
+  } catch (e) {
+    $('header-sub').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  }
+}
+
+async function loadConfig() {
+  const c = await api('/api/config');
+  $('intensity').value = c.activityIntensity;
+  $('perUser').value = c.maxActivitiesPerUserPerDay;
+  $('perHour').value = c.maxActivitiesPerTenantPerHour;
+  $('config-note').innerHTML =
+    `Each user is capped at <code>${c.effectivePerPersonaCap}</code> a day (max per user/day minus 2). ` +
+    `Raise that alongside intensity or it quietly caps the increase.`;
+}
+
+async function loadPeople() {
+  const people = await api('/api/personas');
+  const options = people.map(p =>
+    `<option value="${esc(p.upn)}">${esc(p.name)}${p.department ? ' &middot; ' + esc(p.department) : ''}</option>`).join('');
+  $('run-user').innerHTML = '<option value="">Anyone</option>' + options;
+  $('f-persona').innerHTML = '<option value="">Everyone</option>' + options;
+
+  const kinds = await api('/api/kinds');
+  const kindOptions = kinds.map(k => `<option>${esc(k)}</option>`).join('');
+  $('run-kind').innerHTML = '<option value="">Any</option>' + kindOptions;
+  $('f-kind').innerHTML = '<option value="">Any</option>' + kindOptions;
+}
+
+async function loadStats() {
+  const since = $('f-since').value;
+  const s = await api(`/api/stats?since=${since}`);
+
+  tiles('stat-tiles', [
+    ['Total', s.total], ['Executed', s.executed, 'ok'],
+    ['Skipped', s.skipped], ['Failed', s.failed, s.failed > 0 ? 'bad' : '']
+  ]);
+
+  $('by-actor').innerHTML =
+    '<tr><th>User</th><th>Total</th><th>Exec</th><th>Skip</th><th>Fail</th></tr>' +
+    (s.byActor.map(a => `<tr><td>${esc(a.name)}</td><td>${a.total}</td><td>${a.executed}</td>` +
+      `<td>${a.skipped}</td><td class="${a.failed ? 'bad' : ''}">${a.failed}</td></tr>`).join('')
+      || '<tr><td colspan="5">Nothing recorded yet.</td></tr>');
+
+  $('by-kind').innerHTML =
+    '<tr><th>Activity</th><th>Count</th></tr>' +
+    (s.byKind.map(k => `<tr><td>${esc(k.kind)}</td><td>${k.count}</td></tr>`).join('')
+      || '<tr><td colspan="2">Nothing recorded yet.</td></tr>');
+}
+
+async function loadActivity() {
+  const params = new URLSearchParams({
+    since: $('f-since').value, limit: '200',
+    persona: $('f-persona').value, kind: $('f-kind').value, outcome: $('f-outcome').value
+  });
+  const rows = await api('/api/activity?' + params);
+
+  $('activity').innerHTML =
+    '<tr><th>When</th><th>Outcome</th><th>Activity</th><th>User</th><th>Topic</th><th></th></tr>' +
+    (rows.map(r => `<tr>
+        <td>${esc(when(r.occurredUtc))}</td>
+        <td><span class="pill ${esc(r.outcome)}">${esc(r.outcome)}</span></td>
+        <td>${esc(r.kind)}</td>
+        <td>${esc(r.name)}</td>
+        <td>${esc(r.topic)}${r.error ? `<div class="bad">${esc(r.error)}</div>` : ''}</td>
+        <td>${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener">open</a>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="6">Nothing matched.</td></tr>');
+}
+
+async function refresh() {
+  await Promise.all([loadHealth(), loadStats(), loadActivity()]);
+}
+
+$('save-config').onclick = async () => {
+  const button = $('save-config');
+  button.disabled = true;
+  try {
+    await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        activityIntensity: parseFloat($('intensity').value),
+        maxActivitiesPerUserPerDay: parseInt($('perUser').value, 10),
+        maxActivitiesPerTenantPerHour: parseInt($('perHour').value, 10)
+      })
+    });
+    await loadConfig();
+    // The plan is rebuilt from the new settings, so show the effect immediately.
+    await loadHealth();
+    $('config-note').innerHTML += ' <span class="ok">Saved.</span>';
+  } catch (e) {
+    $('config-note').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$('run-now').onclick = async () => {
+  const button = $('run-now');
+  button.disabled = true;
+  $('run-results').innerHTML = '';
+  $('run-note').textContent = 'Generating...';
+  try {
+    const results = await api('/api/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        upn: $('run-user').value || null,
+        kind: $('run-kind').value || null,
+        count: parseInt($('run-count').value, 10)
+      })
+    });
+    $('run-note').textContent = `Ran ${results.length}.`;
+    $('run-results').innerHTML = '<table>' + results.map(r => `<tr>
+        <td><span class="pill ${esc(r.outcome)}">${esc(r.outcome)}</span></td>
+        <td>${esc(r.kind)}</td><td>${esc(r.name)}</td>
+        <td>${esc(r.detail || r.error || r.topic)}</td>
+        <td>${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener">open</a>` : ''}</td>
+      </tr>`).join('') + '</table>';
+    await refresh();
+  } catch (e) {
+    $('run-note').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$('refresh').onclick = refresh;
+for (const id of ['f-since', 'f-persona', 'f-kind', 'f-outcome']) {
+  $(id).onchange = () => { loadStats(); loadActivity(); };
+}
+
+(async () => {
+  await loadPeople().catch(() => {});
+  await loadConfig().catch(() => {});
+  await refresh();
+  setInterval(loadHealth, 30000);
+})();
+</script>
+</body>
+</html>

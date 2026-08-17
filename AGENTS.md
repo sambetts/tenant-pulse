@@ -71,6 +71,7 @@ src/
 │   ├── Journaling/                 ← SQLite + Azure Table journals
 │   └── PulseEngine.cs              ← the run loop
 ├── TenantPulse.Cli/Commands/       ← doctor, bootstrap, plan, run, once, verify-copilot, report, purge
+├── TenantPulse.Cli/Admin/          ← admin web served from inside `run` (single-writer, see below)
 └── TenantPulse.Tests/
 config/storylines.json              ← storylines are DATA, not code
 ```
@@ -224,6 +225,16 @@ Things it does deliberately, which you should not undo:
 - **The payload must stay one line and pure ASCII.** The log collector emits one row per line, so a
   wrapped event is unparseable, and the Windows `az` log viewer dies on any non-ASCII byte. The
   default `System.Text.Json` encoder escapes both; `ActivityEventLogTests` pins it.
+- **The admin web is hosted inside `run` on purpose.** The simulator is single-writer, so a separate
+  service able to trigger activity would double-post and race the journal. It has no authentication
+  of its own — Container Apps' built-in Entra auth sits in front, and `deploy-azure.ps1 -AdminWeb`
+  enables ingress and auth as one step so the control plane is never briefly public.
+- **The container image must be `dotnet/aspnet`, not `dotnet/runtime`.** Hosting the admin web adds
+  a `FrameworkReference` to `Microsoft.AspNetCore.App`; on the plain runtime image the container
+  dies instantly with "No frameworks were found", which reads exactly like a broken image.
+- **Adding `FrameworkReference Microsoft.AspNetCore.App` breaks the build until the
+  `Microsoft.Extensions.*` package references are removed** from that csproj — the shared framework
+  already supplies them and NU1510 is an error here.
 - **No DPAPI or keyring exists in a container**, so `TokenCacheStore` falls back to an unencrypted
   MSAL cache. It still holds refresh tokens for every user — the volume must stay private.
 - **`run` needs a directory reader to start.** With an empty cache there is no enrolled user, so the

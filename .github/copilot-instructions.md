@@ -98,6 +98,9 @@ Entra directory → GraphPersonaDirectory → Persona[] ────┴→ DayPl
   never collected, only the main process's stdout.
 - **Weekends really are near-silent** (160 activities Friday, 1 Saturday, 3 Sunday). Check the day
   before investigating "no activity".
+- **The admin web lives inside the `run` process** (`Cli/Admin/`) because the simulator is
+  single-writer; it has no auth of its own and relies on Container Apps Entra auth in front. The
+  image must therefore be `dotnet/aspnet`, not `dotnet/runtime`.
 - **`NSubstitute` is pinned to 6.1.0** — 6.2.0 isn't on the internal NuGet feed.
 
 ## Realism lives in `Core/Scheduling/DayPlanner.cs`

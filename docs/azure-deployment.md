@@ -133,6 +133,40 @@ ContainerAppConsoleLogs_CL
 
 System events use `ContainerAppSystemLogs_CL`.
 
+### Admin web
+
+`run` can serve a small admin page from inside its own process: current stats, recent activity with
+links, the creation-rate dial, and a button to generate activity for a chosen user right now.
+
+```pwsh
+.\scripts\deploy-azure.ps1 ... -AdminWeb
+```
+
+That enables ingress **and** Container Apps' built-in Entra authentication together, because the app
+carries no authentication of its own. The script refuses to report success if ingress ends up open
+without it.
+
+Two things about it are deliberate:
+
+- **It runs inside the `run` process.** The simulator is single-writer — a separate service able to
+  trigger activity would double-post into the tenant and race the journal. Being in-process also
+  means a manually generated batch goes through the real engine and therefore shows up in the
+  journal, the console, Log Analytics and the workbook exactly like scheduled activity. Anything
+  started with `az containerapp exec` never reaches Log Analytics at all.
+- **Stats come from the journal, not Log Analytics.** Same data the workbook shows — the workbook's
+  events are emitted from it — but with no ingestion lag and no extra RBAC.
+
+Settings changed here are written to a `...Settings` table beside the journal and reapplied on
+startup, so they survive the container being replaced on the next deployment.
+
+Locally:
+
+```pwsh
+dotnet run --project src/TenantPulse.Cli -- run --offline --admin --admin-port 8099
+```
+
+There is no authentication in front of that, so keep it on localhost.
+
 ### Activity workbook (the easy view)
 
 `scripts/deploy-report-workbook.ps1` deploys an Azure Workbook that reports what the simulator has

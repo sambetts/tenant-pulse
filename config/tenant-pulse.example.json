@@ -113,6 +113,17 @@
       "SharePointSites": [],
       "//TeamNames": "Optional allow-list of teams to post into. Empty means any team the actor belongs to.",
       "TeamNames": []
+    },
+
+    "Admin": {
+      "//": [
+        "Admin web served from inside 'run'. It lives in that process because the simulator is",
+        "single-writer: a separate service able to trigger activity would double-post into the",
+        "tenant and race the journal. There is no authentication in the app - put something in",
+        "front of it. The hosted deployment uses Container Apps' built-in Entra authentication."
+      ],
+      "Enabled": false,
+      "Port": 8080
     }
   }
 }
