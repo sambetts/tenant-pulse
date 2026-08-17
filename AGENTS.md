@@ -184,10 +184,23 @@ Things it does deliberately, which you should not undo:
   PowerShell script the rest of the deployment then runs against nothing and still reports success.
   The script polls for the deletion and asserts each resource exists afterwards.
 - **`az containerapp exec` from Windows is doubly awkward.** `az.cmd` hands the command to cmd.exe,
-  which mangles nested quotes (`'sed' is not recognized`) — call az's bundled `python.exe -IBm
-  azure.cli` directly instead. And its output decoder dies with `UnicodeEncodeError: 'charmap'` on
-  any non-ASCII the container prints, which `report` is full of; `PYTHONUTF8`/`chcp` do not help, so
-  pipe the command through `sed 's/[^ -~]//g'` inside the container.
+  which mangles nested quotes (`'sed' is not recognized`) — call az's bundled `python.exe` directly
+  instead, and keep the `--command` free of nested quotes. Its output decoder then dies with
+  `UnicodeEncodeError: 'charmap'` on any non-ASCII the container prints, which `report` is full of.
+  The fix is `PYTHONIOENCODING`, but **it must not be run under `-I`**: isolated mode implies `-E`,
+  so Python ignores the variable and the crash looks unfixable. Use `-Bm`:
+
+  ```pwsh
+  $env:PYTHONIOENCODING='utf-8'; [Console]::OutputEncoding=[Text.Encoding]::UTF8
+  & 'C:\Program Files\Microsoft SDKs\Azure\CLI2\python.exe' -Bm azure.cli `
+      containerapp exec -n ca-tenant-pulse -g rg-tenant-pulse `
+      --command "dotnet /app/tenant-pulse.dll report --since 7"
+  ```
+- **The hosted journal cannot be read from a workstation.** `docs/azure-deployment.md` shows
+  `report` pointed at `JournalTable__Endpoint`, which works only from inside the VNet. CDX-style
+  governed subscriptions keep `publicNetworkAccess: Disabled` on the storage account, so a laptop
+  gets `403 AuthorizationFailure` — a *network* refusal that looks like an RBAC problem and is not
+  fixed by granting `Storage Table Data Reader`. Run `report` inside the container instead.
 - **No DPAPI or keyring exists in a container**, so `TokenCacheStore` falls back to an unencrypted
   MSAL cache. It still holds refresh tokens for every user — the volume must stay private.
 - **`run` needs a directory reader to start.** With an empty cache there is no enrolled user, so the
@@ -199,6 +212,16 @@ Things it does deliberately, which you should not undo:
 - **A misconfigured Azure OpenAI must not break read-only commands.** `AddContentGeneration` in
   `ServiceRegistration.cs` try-constructs the Azure generator and silently falls back to templates.
   Before that, `plan` and `doctor` crashed with a DI resolution error when no endpoint was set.
+- **Azure OpenAI needs Entra auth in a governed subscription.** `disableLocalAuth` is commonly set,
+  so every API key is refused with `403 AuthenticationTypeDisabled`. Because generation falls back
+  to templates the run looks healthy and the content merely gets blander, which is why this went
+  unnoticed for days. Set `Content:UseEntraAuth` (or configure no key at all) and grant the app's
+  managed identity `Cognitive Services OpenAI User` on the resource. `deploy-azure.ps1` detects
+  `disableLocalAuth` and does both automatically. Note that *constructing* the client proves
+  nothing — `doctor` sends a real test prompt via `AzureOpenAIContentGenerator.ProbeAsync`.
+- **Low weekend volume is correct, not a fault.** A representative week planned 160 activities on
+  the Friday, 1 on the Saturday, 3 on the Sunday and 162 on the Monday. Before investigating a
+  "collapse" in activity, check the day of the week.
 - **`NSubstitute` is pinned to 6.1.0** — 6.2.0 is on nuget.org but not on the internal feed this
   machine restores from.
 - **The template generator must split `"Storyline — angle"` topics** (`Topic()` / `Focus()` helpers)

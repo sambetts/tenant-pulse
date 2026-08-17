@@ -136,7 +136,25 @@ System events use `ContainerAppSystemLogs_CL`.
 ### Durable activity report
 
 `report` is the authoritative view because it reads structured journal entries rather than console
-text:
+text.
+
+The storage account is normally closed to the public internet (`publicNetworkAccess: Disabled`,
+often enforced by policy), so **run it inside the container** — the app's managed identity already
+holds `Storage Table Data Contributor`:
+
+```pwsh
+$env:PYTHONIOENCODING='utf-8'; [Console]::OutputEncoding=[Text.Encoding]::UTF8
+& 'C:\Program Files\Microsoft SDKs\Azure\CLI2\python.exe' -Bm azure.cli `
+    containerapp exec -n ca-tenant-pulse -g rg-tenant-pulse `
+    --command "dotnet /app/tenant-pulse.dll report --since 7"
+```
+
+Calling az's bundled `python.exe` directly avoids cmd.exe mangling the command, and
+`PYTHONIOENCODING` avoids a `UnicodeEncodeError: 'charmap'` on the report's box-drawing characters.
+Do not add `-I`: isolated mode makes Python ignore that variable.
+
+Running `report` from a workstation only works where the table endpoint is reachable — an
+on-network machine, or a deployment whose storage account still allows public access:
 
 ```pwsh
 $env:TENANTPULSE_TenantPulse__Simulation__JournalTable__Endpoint =
@@ -145,7 +163,29 @@ $env:TENANTPULSE_TenantPulse__Simulation__JournalTable__Endpoint =
 dotnet run --project src\TenantPulse.Cli -- report --since 7 --recent 20
 ```
 
-The caller needs network access to the private Table endpoint and `Storage Table Data Reader`.
+The caller needs `Storage Table Data Reader`. A `403 AuthorizationFailure` is the storage *firewall*
+refusing the request, not a missing role — granting the role will not help. A missing role reports
+`AuthorizationPermissionMismatch` instead.
+
+### Content generation
+
+Every activity logging `Content generation failed ... falling back to templates` with
+`403 AuthenticationTypeDisabled` means the Azure OpenAI resource has `disableLocalAuth` set and is
+refusing the API key. The run continues on templates, so nothing fails visibly — only the prose gets
+duller. Fix it with Entra auth rather than by re-enabling keys:
+
+```pwsh
+az cognitiveservices account show -n <aoai-name> -g rg-tenant-pulse --query properties.disableLocalAuth
+
+az role assignment create --assignee-object-id <app-principal-id> `
+    --assignee-principal-type ServicePrincipal `
+    --role 'Cognitive Services OpenAI User' `
+    --scope $(az cognitiveservices account show -n <aoai-name> -g rg-tenant-pulse --query id -o tsv)
+```
+
+then set `TENANTPULSE_TenantPulse__Content__UseEntraAuth=true` and drop the key. `deploy-azure.ps1`
+detects `disableLocalAuth` and does all of this for you. `doctor` sends a real test prompt, so it
+reports this rather than just reporting that a client could be constructed.
 
 ## Upgrade safety
 

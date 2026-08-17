@@ -78,20 +78,48 @@ internal sealed class DoctorCommand(
         // ---- content generation ---------------------------------------------
         if (Options.Content.Provider == ContentProvider.AzureOpenAI)
         {
+            AzureOpenAIContentGenerator? generator = null;
+
             try
             {
-                _ = new AzureOpenAIContentGenerator(
+                generator = new AzureOpenAIContentGenerator(
                     Options,
                     Services.GetRequiredService<ContentPromptBuilder>(),
                     Services.GetRequiredService<ILogger<AzureOpenAIContentGenerator>>());
-
-                Check("Content", $"Azure OpenAI — {Options.Content.Deployment} @ {Options.Content.Endpoint}");
             }
             catch (Exception ex)
             {
                 Check("Content", "Azure OpenAI NOT USABLE — falling back to templates");
                 warnings.Add($"Azure OpenAI is misconfigured, so content will fall back to templates: " +
                              $"{ex.GetBaseException().Message}");
+            }
+
+            if (generator is not null)
+            {
+                // Constructing the client proves nothing — a disabled key, a missing role
+                // assignment or a wrong deployment name all construct perfectly and then fail on
+                // every call, silently degrading to templates. So actually call it.
+                try
+                {
+                    await generator.ProbeAsync(cancellationToken).ConfigureAwait(false);
+
+                    Check("Content", $"Azure OpenAI ({generator.AuthenticationMode}) — " +
+                                     $"{Options.Content.Deployment} @ {Options.Content.Endpoint}");
+                }
+                catch (Exception ex)
+                {
+                    Check("Content", $"Azure OpenAI ({generator.AuthenticationMode}) UNREACHABLE — " +
+                                     "falling back to templates");
+                    warnings.Add($"Azure OpenAI rejected a test prompt, so all content will fall back " +
+                                 $"to templates: {ex.GetBaseException().Message}");
+
+                    if (generator.AuthenticationMode == "API key")
+                    {
+                        warnings.Add("If that was 'AuthenticationTypeDisabled', the resource has " +
+                                     "disableLocalAuth set. Set TenantPulse:Content:UseEntraAuth to true " +
+                                     "and grant 'Cognitive Services OpenAI User' on the resource.");
+                    }
+                }
             }
         }
         else

@@ -106,6 +106,10 @@ $env:TENANTPULSE_AOAI_KEY = "<azure-openai-key>"
 $env:TENANTPULSE_SHARED_PASSWORD = "<shared demo user password>"   # only for UsernamePassword mode
 ```
 
+If the Azure OpenAI resource has `disableLocalAuth` set — common under subscription policy — no key
+will work. Leave it unset, or set `Content:UseEntraAuth` to `true`, and grant yourself (or the
+hosted app's managed identity) the `Cognitive Services OpenAI User` role on the resource.
+
 ### 3. Check
 
 ```pwsh

@@ -86,6 +86,14 @@ Entra directory → GraphPersonaDirectory → Persona[] ────┴→ DayPl
   random workspace and leaves the previous one orphaned.
 - **A misconfigured Azure OpenAI must never break read-only commands** — `AddContentGeneration`
   try-constructs and falls back to templates (this was a real crash in `plan`/`doctor`).
+- **Azure OpenAI needs `Content:UseEntraAuth` where `disableLocalAuth` is set** — keys get
+  `403 AuthenticationTypeDisabled`, generation silently falls back to templates, and the only
+  symptom is blander prose. Grant the identity `Cognitive Services OpenAI User`.
+- **Read the hosted journal from inside the container**, not a workstation — storage keeps
+  `publicNetworkAccess: Disabled`, so `report` gets `403 AuthorizationFailure` locally. Use
+  `python.exe -Bm azure.cli containerapp exec` with `PYTHONIOENCODING=utf-8`; `-I` breaks it.
+- **Weekends really are near-silent** (160 activities Friday, 1 Saturday, 3 Sunday). Check the day
+  before investigating "no activity".
 - **`NSubstitute` is pinned to 6.1.0** — 6.2.0 isn't on the internal NuGet feed.
 
 ## Realism lives in `Core/Scheduling/DayPlanner.cs`

@@ -233,10 +233,26 @@ public sealed class ContentOptions
     public string? Deployment { get; set; }
 
     /// <summary>
-    /// API key. Prefer the TENANTPULSE_AOAI_KEY environment variable; leave null to use
-    /// Entra (DefaultAzureCredential-style) auth is not supported — a key is required.
+    /// API key. Prefer the TENANTPULSE_AOAI_KEY environment variable. Leave null to authenticate
+    /// with Entra instead — see <see cref="UseEntraAuth"/>.
     /// </summary>
     public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// Authenticate to Azure OpenAI with Entra (the managed identity when hosted, whoever is signed
+    /// in to the Azure CLI locally) rather than an API key.
+    /// <para>
+    /// Governed subscriptions routinely set <c>disableLocalAuth</c> on the Azure OpenAI resource, at
+    /// which point a key is not merely discouraged but rejected outright with
+    /// <c>403 AuthenticationTypeDisabled</c> — and because content generation falls back to
+    /// templates, the only symptom is blander text. Entra auth needs the
+    /// <c>Cognitive Services OpenAI User</c> role on the resource.
+    /// </para>
+    /// <para>
+    /// Entra is used automatically when no key is configured; set this to force it even when one is.
+    /// </para>
+    /// </summary>
+    public bool UseEntraAuth { get; set; }
 
     /// <summary>Fictional company the personas work for. Steers all generated content.</summary>
     public string CompanyName { get; set; } = "Contoso";

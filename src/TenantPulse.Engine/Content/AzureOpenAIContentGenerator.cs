@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Extensions.Logging;
 using OpenAI.Chat;
 using System.ClientModel;
@@ -15,6 +16,9 @@ public sealed partial class AzureOpenAIContentGenerator : IContentGenerator
     private readonly ContentPromptBuilder _promptBuilder;
     private readonly TenantPulseOptions _options;
     private readonly ILogger<AzureOpenAIContentGenerator> _logger;
+
+    /// <summary>How this client authenticates, for <c>doctor</c> to report.</summary>
+    public string AuthenticationMode { get; }
 
     public AzureOpenAIContentGenerator(
         TenantPulseOptions options,
@@ -41,13 +45,37 @@ public sealed partial class AzureOpenAIContentGenerator : IContentGenerator
             throw new InvalidOperationException("Azure OpenAI content generation requires TenantPulse:Content:Deployment.");
         }
 
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            throw new InvalidOperationException("Azure OpenAI content generation requires TenantPulse:Content:ApiKey or the TENANTPULSE_AOAI_KEY environment variable.");
-        }
+        // No key is not a misconfiguration: Entra is the better credential and the only one that
+        // works against a resource with disableLocalAuth set.
+        var useEntra = options.Content.UseEntraAuth || string.IsNullOrWhiteSpace(apiKey);
 
-        var client = new AzureOpenAIClient(new Uri(endpoint), new ApiKeyCredential(apiKey));
+        var client = useEntra
+            ? new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+            : new AzureOpenAIClient(new Uri(endpoint), new ApiKeyCredential(apiKey!));
+
+        AuthenticationMode = useEntra ? "Entra" : "API key";
         _chatClient = client.GetChatClient(deployment);
+
+        _logger.LogDebug(
+            "Azure OpenAI content generation using {AuthenticationMode} against {Deployment}.",
+            AuthenticationMode,
+            deployment);
+    }
+
+    /// <summary>
+    /// Smallest possible live call, so a configuration check fails for the reasons that actually
+    /// bite: key auth disabled by policy, a missing role assignment, a wrong deployment name. None
+    /// of those are visible from constructing the client, and because generation falls back to
+    /// templates the only other symptom is content that quietly gets blander.
+    /// </summary>
+    public async Task ProbeAsync(CancellationToken cancellationToken)
+    {
+        var probeOptions = new ChatCompletionOptions { MaxOutputTokenCount = 16 };
+
+        await _chatClient.CompleteChatAsync(
+            [ChatMessage.CreateUserMessage("ping")],
+            probeOptions,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<GeneratedContent> GenerateAsync(ContentRequest request, CancellationToken cancellationToken)

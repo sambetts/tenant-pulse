@@ -416,9 +416,25 @@ try {
             --public-network-access Disabled --only-show-errors | Out-Null
     }
 
-    if (-not $OpenAiKey -and $OpenAiEndpoint) {
+    # Governed subscriptions routinely set disableLocalAuth on Cognitive Services, which rejects
+    # every API key with 403 AuthenticationTypeDisabled. Content generation falls back to templates
+    # on failure, so the only symptom is blander text - detect it here and use Entra instead.
+    $aoaiName  = ''
+    $aoaiEntra = $false
+
+    if ($OpenAiEndpoint) {
         $aoaiName = ([uri]$OpenAiEndpoint).Host.Split('.')[0]
-        $OpenAiKey = az cognitiveservices account keys list -n $aoaiName -g $ResourceGroup --query key1 -o tsv --only-show-errors 2>$null
+        $localAuthDisabled = az cognitiveservices account show -n $aoaiName -g $ResourceGroup `
+            --query properties.disableLocalAuth -o tsv --only-show-errors 2>$null
+
+        if ($localAuthDisabled -eq 'true') {
+            $aoaiEntra = $true
+            $OpenAiKey = ''
+            Write-Host "  $aoaiName has local auth disabled; using managed identity for content." -ForegroundColor Yellow
+        }
+        elseif (-not $OpenAiKey) {
+            $OpenAiKey = az cognitiveservices account keys list -n $aoaiName -g $ResourceGroup --query key1 -o tsv --only-show-errors 2>$null
+        }
     }
     if (-not $OpenAiKey) { $OpenAiKey = '' }
 
@@ -429,6 +445,18 @@ try {
     $envId = az containerapp env show -n $envName -g $ResourceGroup --query id -o tsv --only-show-errors
 
     $contentEnv = if ($OpenAiEndpoint) {
+        $contentAuthEnv = if ($aoaiEntra) {
+@"
+          - name: TENANTPULSE_TenantPulse__Content__UseEntraAuth
+            value: 'true'
+"@
+        }
+        else {
+@"
+          - name: TENANTPULSE_AOAI_KEY
+            secretRef: aoai-key
+"@
+        }
 @"
           - name: TENANTPULSE_TenantPulse__Content__Provider
             value: AzureOpenAI
@@ -436,8 +464,7 @@ try {
             value: $OpenAiEndpoint
           - name: TENANTPULSE_TenantPulse__Content__Deployment
             value: $OpenAiDeployment
-          - name: TENANTPULSE_AOAI_KEY
-            secretRef: aoai-key
+$contentAuthEnv
 "@
     } else {
 @"
@@ -599,6 +626,26 @@ $volumeYaml
         }
         else {
             Write-Host '  no managed identity was returned - grant the role by hand.' -ForegroundColor Yellow
+        }
+    }
+
+    # Entra auth to Azure OpenAI needs a data-plane role of its own. Without it every generation
+    # returns 403 and silently falls back to templates, which looks like working content.
+    if ($aoaiEntra -and $aoaiName) {
+        Write-Host 'Granting the app access to Azure OpenAI...' -ForegroundColor Cyan
+        $aoaiPrincipalId = az containerapp show -n $appName -g $ResourceGroup `
+            --query identity.principalId -o tsv --only-show-errors
+        $aoaiId = az cognitiveservices account show -n $aoaiName -g $ResourceGroup `
+            --query id -o tsv --only-show-errors
+
+        if ($aoaiPrincipalId -and $aoaiId) {
+            az role assignment create --assignee-object-id $aoaiPrincipalId `
+                --assignee-principal-type ServicePrincipal `
+                --role 'Cognitive Services OpenAI User' `
+                --scope $aoaiId --only-show-errors 2>$null | Out-Null
+        }
+        else {
+            Write-Host '  could not resolve the identity or the resource - grant the role by hand.' -ForegroundColor Yellow
         }
     }
 

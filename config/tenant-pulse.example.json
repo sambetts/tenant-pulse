@@ -68,6 +68,8 @@
       "Endpoint": "https://your-resource.openai.azure.com/",
       "Deployment": "gpt-4o-mini",
       "ApiKey": null,
+      "//UseEntraAuth": "Authenticate with Entra instead of a key. Required when the resource has disableLocalAuth set, which rejects keys with 403 AuthenticationTypeDisabled. Needs the 'Cognitive Services OpenAI User' role. Entra is used automatically when no key is configured.",
+      "UseEntraAuth": false,
       "//CompanyName": "The fictional company the personas work for. Steers every generated email, chat and document.",
       "CompanyName": "Contoso",
       "CompanyIndustry": "professional services",
