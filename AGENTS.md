@@ -107,6 +107,14 @@ doesn't feel real". It merges:
 1. **Storyline beats** — scripted, coherent, cross-workload, same cast over days.
 2. **Ambient activity** — background hum sized by each persona's traits.
 
+**To make the tenant busier, use `Simulation:ActivityIntensity`** (1.0 default, 2.0 twice the hum).
+It multiplies each persona's trait-derived ambient budget, deliberately leaving storyline beats
+alone — those are scripted to be coherent, and duplicating them reads as a stutter rather than as a
+busier business. Measured on the reference tenant: 160 activities/day at 1.0, 317 at 2.0, 474 at
+3.0. **Raise `Limits:MaxActivitiesPerUserPerDay` and `MaxActivitiesPerTenantPerHour` with it** —
+they are safety ceilings that otherwise cap the increase silently and turn the overflow into skips.
+The per-user budget is capped at `MaxActivitiesPerUserPerDay - 2`, so the stock 14 binds at ~12.
+
 Things it does deliberately, which you should not undo:
 
 - Places activity inside each persona's **own working hours in their own time zone**, avoiding lunch,

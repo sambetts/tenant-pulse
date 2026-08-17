@@ -158,6 +158,47 @@ public class DayPlannerTests
     }
 
     [Fact]
+    public void Intensity_scales_ambient_volume_without_flattening_persona_differences()
+    {
+        var personas = TestData.Workforce(10);
+        var headroom = Options(o =>
+        {
+            o.Limits.MaxActivitiesPerUserPerDay = 200;
+            o.Simulation.ActivityIntensity = 3.0;
+        });
+
+        var normal = new DayPlanner(Options(o => o.Limits.MaxActivitiesPerUserPerDay = 200))
+            .PlanDay(Wednesday, personas, []);
+        var busier = new DayPlanner(headroom).PlanDay(Wednesday, personas, []);
+
+        busier.Count.Should().BeGreaterThan(normal.Count * 2,
+            "intensity 3.0 should produce substantially more activity");
+
+        // Flattening everyone to the same volume is what makes simulated traffic read as simulated,
+        // so the spread between the busiest and quietest persona must survive the dial.
+        var perPersona = busier.GroupBy(i => i.Actor.Id).Select(g => g.Count()).ToList();
+        perPersona.Max().Should().BeGreaterThan(perPersona.Min());
+    }
+
+    [Fact]
+    public void Intensity_never_overrides_the_safety_cap()
+    {
+        var options = Options(o =>
+        {
+            o.Limits.MaxActivitiesPerUserPerDay = 6;
+            o.Simulation.ActivityIntensity = 10.0;
+        });
+
+        var plan = new DayPlanner(options).PlanDay(Wednesday, TestData.Workforce(10), []);
+
+        foreach (var group in plan.GroupBy(i => i.Actor.Id))
+        {
+            group.Count().Should().BeLessThanOrEqualTo(6,
+                "{0} was planned {1} activities but the cap is 6", group.Key, group.Count());
+        }
+    }
+
+    [Fact]
     public void An_actor_never_targets_themselves()
     {
         var plan = new DayPlanner(Options()).PlanDay(Wednesday, TestData.Workforce(10), []);

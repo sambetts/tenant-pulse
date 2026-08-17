@@ -205,7 +205,7 @@ public sealed class DayPlanner(TenantPulseOptions options)
     {
         if (!isWorkingDay)
         {
-            return rng.Next(1, 3);
+            return ScaleToPolicy(rng.Next(1, 3));
         }
 
         var appetite =
@@ -214,7 +214,25 @@ public sealed class DayPlanner(TenantPulseOptions options)
         // 2..9 activities for a normal working day, shaped by traits and capped by policy.
         var baseline = 2 + (int)Math.Round(appetite * 7);
         var jittered = Math.Max(1, baseline + rng.Next(-1, 2));
-        return Math.Min(jittered, Math.Max(1, options.Limits.MaxActivitiesPerUserPerDay - 2));
+        return ScaleToPolicy(jittered);
+    }
+
+    /// <summary>
+    /// Applies the volume dial, then the safety ceiling.
+    /// <para>
+    /// Intensity scales the shape rather than replacing it, so a chatty persona stays chattier than
+    /// a quiet one at every setting — flattening everyone to the same volume is exactly what makes
+    /// simulated traffic read as simulated. The per-user limit still wins, because it is a safety
+    /// control rather than a realism one; raise <c>Limits:MaxActivitiesPerUserPerDay</c> alongside
+    /// intensity or it will quietly cap the increase.
+    /// </para>
+    /// </summary>
+    private int ScaleToPolicy(int budget)
+    {
+        var intensity = Math.Clamp(options.Simulation.ActivityIntensity, 0.1, 20.0);
+        var scaled = Math.Max(1, (int)Math.Round(budget * intensity));
+
+        return Math.Min(scaled, Math.Max(1, options.Limits.MaxActivitiesPerUserPerDay - 2));
     }
 
     private ActivityKind? PickAmbientKind(Persona persona, Random rng)

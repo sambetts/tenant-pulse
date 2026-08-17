@@ -102,7 +102,11 @@ Entra directory → GraphPersonaDirectory → Persona[] ────┴→ DayPl
 
 ## Realism lives in `Core/Scheduling/DayPlanner.cs`
 
-If something "doesn't feel real", start there. It deliberately: places activity in each persona's own
+If something "doesn't feel real", start there. To make the tenant *busier*, use
+`Simulation:ActivityIntensity` (1.0 default; 160/317/474 activities per day at 1.0/2.0/3.0) and
+raise both `Limits` values with it, or they cap the increase and it surfaces as skipped activity.
+
+It deliberately: places activity in each persona's own
 working hours and time zone (avoiding lunch, two-hump daily distribution, DST-safe); gives ambient
 topics a specific angle rather than repeating the storyline title; spaces one persona's activities
 apart so they don't collide; and prefers same-department colleagues as targets. Don't flatten any of

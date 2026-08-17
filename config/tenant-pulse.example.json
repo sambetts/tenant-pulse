@@ -36,6 +36,8 @@
       "DefaultTimeZone": "Europe/London",
       "ConcurrentStorylines": 3,
       "IncludeAfterHours": true,
+      "//ActivityIntensity": "Volume dial for ambient activity. 1.0 is the default hum, 2.0 roughly twice as much. Raise both Limits values alongside it or they will cap the increase and it will show up as skipped activity.",
+      "ActivityIntensity": 1.0,
       "JournalPath": ".state/journal.db",
       "//JournalTable": [
         "Optional. When set, the journal lives in Azure Table Storage instead of SQLite, so it can",
@@ -57,7 +59,7 @@
     },
 
     "Limits": {
-      "//": "Deliberately conservative. This is not a load test — it is a tenant that looks used.",
+      "//": "Deliberately conservative. This is not a load test — it is a tenant that looks used. Raise these together with Simulation.ActivityIntensity; the per-user value caps each persona's daily budget (minus 2) and the per-hour value is a tenant-wide ceiling that rejects the overflow as skipped.",
       "MaxActivitiesPerUserPerDay": 14,
       "MaxActivitiesPerTenantPerHour": 60,
       "MinSecondsBetweenUserActivities": 90,

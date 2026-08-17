@@ -79,6 +79,19 @@
 .PARAMETER CompanyIndustry
     What that company does. Steers every generated mail, chat and document.
 
+.PARAMETER ActivityIntensity
+    Volume dial for ambient activity. 1.0 is the default hum, 2.0 roughly twice as much. Measured on
+    a 25-persona tenant: 160 activities/day at 1.0, 317 at 2.0, 474 at 3.0. Storyline beats are not
+    scaled - they are scripted to be coherent, and repeating them reads as a stutter.
+
+.PARAMETER MaxActivitiesPerUserPerDay
+    Safety ceiling per persona. Each persona's ambient budget is capped at this minus 2, so leaving
+    it at the default silently caps any intensity above about 1.5. Raise it with ActivityIntensity.
+
+.PARAMETER MaxActivitiesPerTenantPerHour
+    Tenant-wide safety ceiling. Overflow is rejected as skipped activity rather than queued, so this
+    also needs raising alongside ActivityIntensity.
+
 .EXAMPLE
     ./scripts/deploy-azure.ps1 -TenantId <guid> -ClientId <guid> -Domain contoso.onmicrosoft.com `
         -DirectoryReader user@contoso.onmicrosoft.com
@@ -112,6 +125,11 @@ param(
 
     [string] $CompanyName = 'Contoso',
     [string] $CompanyIndustry = 'professional services',
+
+    [ValidateRange(0.1, 20.0)]
+    [double] $ActivityIntensity = 1.0,
+    [int] $MaxActivitiesPerUserPerDay = 14,
+    [int] $MaxActivitiesPerTenantPerHour = 60,
 
     [string] $Tag = "v$(Get-Date -Format 'yyyyMMddHHmm')"
 )
@@ -565,6 +583,12 @@ properties:
 $journalEnv
           - name: TENANTPULSE_TenantPulse__Simulation__KillSwitchFile
             value: $statePath/STOP
+          - name: TENANTPULSE_TenantPulse__Simulation__ActivityIntensity
+            value: '$($ActivityIntensity.ToString([System.Globalization.CultureInfo]::InvariantCulture))'
+          - name: TENANTPULSE_TenantPulse__Limits__MaxActivitiesPerUserPerDay
+            value: '$MaxActivitiesPerUserPerDay'
+          - name: TENANTPULSE_TenantPulse__Limits__MaxActivitiesPerTenantPerHour
+            value: '$MaxActivitiesPerTenantPerHour'
           - name: TENANTPULSE_TenantPulse__Content__CompanyName
             value: '$CompanyName'
           - name: TENANTPULSE_TenantPulse__Content__CompanyIndustry

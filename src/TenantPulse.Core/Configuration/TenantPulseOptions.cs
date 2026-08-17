@@ -135,6 +135,22 @@ public sealed class SimulationOptions
     /// <summary>Simulate a little weekend/evening activity.</summary>
     public bool IncludeAfterHours { get; set; } = true;
 
+    /// <summary>
+    /// Volume dial for ambient activity: 1.0 is the default hum, 2.0 is roughly twice as much.
+    /// <para>
+    /// It multiplies each persona's trait-derived budget rather than replacing it, so the quiet
+    /// people stay quieter than the chatty ones at every setting. Storyline beats are deliberately
+    /// unaffected — they are scripted to be coherent, and duplicating them would read as a stutter
+    /// rather than as a busier business.
+    /// </para>
+    /// <para>
+    /// <see cref="LimitsOptions.MaxActivitiesPerUserPerDay"/> and
+    /// <see cref="LimitsOptions.MaxActivitiesPerTenantPerHour"/> still apply. Raise them alongside
+    /// this or they will silently cap the increase and show up as skipped activity.
+    /// </para>
+    /// </summary>
+    public double ActivityIntensity { get; set; } = 1.0;
+
     /// <summary>Path to the SQLite activity journal.</summary>
     public string JournalPath { get; set; } = ".state/journal.db";
 
