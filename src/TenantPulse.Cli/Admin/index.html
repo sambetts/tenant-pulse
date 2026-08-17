@@ -86,6 +86,13 @@
   .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; align-items: end; }
   .filters .field { margin-bottom: 0; }
   .empty { color: var(--muted); padding: 18px 8px; }
+  .code {
+    font: 600 26px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    letter-spacing: .12em; background: var(--sunk); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px 16px; display: inline-block; user-select: all;
+  }
+  .steps { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  .inline-btn { width: auto; padding: 6px 12px; }
 </style>
 </head>
 <body>
@@ -176,6 +183,11 @@
   </section>
 
   <section id="tab-generate" class="stack" hidden>
+    <div id="enrol-banner" class="panel" hidden>
+      <h2>Sign-in needed</h2>
+      <div id="enrol-body"></div>
+    </div>
+
     <div class="cols">
       <div class="panel">
         <h2>Generate now</h2>
@@ -203,6 +215,17 @@
       <div class="panel">
         <h2>Result</h2>
         <div id="run-results" class="empty">Nothing generated yet.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Users</h2>
+      <div class="scroll short"><table id="people"></table></div>
+      <div class="note">
+        A user with no cached sign-in cannot act, and their activity is recorded as
+        <span class="pill Skipped">Skipped</span>. Token caches live on container-local disk, so a
+        restart clears them; accounts that accept the shared password re-enrol themselves, and the
+        rest need the button above.
       </div>
     </div>
   </section>
@@ -376,20 +399,139 @@ async function loadConfig() {
 
 async function loadPeople() {
   const people = await api('/api/personas');
+  peopleByUpn = new Map(people.map(p => [p.upn, p]));
+
   const options = people.map(p =>
-    `<option value="${esc(p.upn)}">${esc(p.name)}${p.department ? ' &middot; ' + esc(p.department) : ''}</option>`
+    `<option value="${esc(p.upn)}">${esc(p.name)}${p.department ? ' &middot; ' + esc(p.department) : ''}` +
+    `${p.enrolled ? '' : ' (not signed in)'}</option>`
   ).join('');
   $('run-user').innerHTML = '<option value="">Anyone</option>' + options;
   $('f-persona').innerHTML = '<option value="">Everyone</option>' + options;
+
+  table('people', ['User', 'Department', 'Sign-in', ''], people, p =>
+    `<tr>
+      <td>${esc(p.name)}<div class="note" style="margin:0">${esc(p.upn)}</div></td>
+      <td class="nowrap">${esc(p.department || '')}</td>
+      <td><span class="pill ${p.enrolled ? 'Executed' : 'Skipped'}">${p.enrolled ? 'Signed in' : 'Not signed in'}</span></td>
+      <td><button class="action ghost inline-btn" data-enrol="${esc(p.upn)}">${p.enrolled ? 'Re-sign in' : 'Sign in'}</button></td>
+    </tr>`);
+
+  for (const button of $('people').querySelectorAll('[data-enrol]')) {
+    button.onclick = () => startEnrolment(button.dataset.enrol);
+  }
 
   const kinds = await api('/api/kinds');
   const kindOptions = kinds.map(k => `<option>${esc(k)}</option>`).join('');
   $('run-kind').innerHTML = '<option value="">Any</option>' + kindOptions;
   $('f-kind').innerHTML = '<option value="">Any</option>' + kindOptions;
+
+  updateEnrolBanner();
+}
+
+/* ---- enrolment ----------------------------------------------------------- */
+let peopleByUpn = new Map();
+let enrolPoll = null;
+
+// The prompt only makes sense for a specific user, so "Anyone" never offers one.
+function updateEnrolBanner() {
+  if (enrolPoll) return;
+  const upn = $('run-user').value;
+  const person = upn ? peopleByUpn.get(upn) : null;
+
+  if (!person || person.enrolled) {
+    $('enrol-banner').hidden = true;
+    return;
+  }
+
+  $('enrol-banner').hidden = false;
+  $('enrol-body').innerHTML =
+    `<p class="note" style="margin-top:0"><b>${esc(person.name)}</b> has no cached sign-in, so
+      generating for them will only produce <span class="pill Skipped">Skipped</span>.</p>
+     <button class="action inline-btn" id="enrol-start">Sign in as ${esc(person.name)}</button>`;
+  $('enrol-start').onclick = () => startEnrolment(upn);
+}
+
+async function startEnrolment(upn) {
+  const person = peopleByUpn.get(upn);
+  $('enrol-banner').hidden = false;
+  $('enrol-body').innerHTML = '<p class="note" style="margin-top:0">Requesting a sign-in code...</p>';
+
+  try {
+    const flow = await api('/api/enrol', { method: 'POST', body: JSON.stringify({ upn }) });
+    renderEnrolment(flow, person);
+    pollEnrolment(flow.id, person);
+  } catch (e) {
+    $('enrol-body').innerHTML = `<p class="bad">${esc(e.message)}</p>`;
+  }
+}
+
+function renderEnrolment(flow, person) {
+  const who = esc(person?.name || flow.upn);
+
+  if (flow.status === 'Enrolled') {
+    $('enrol-body').innerHTML =
+      `<p class="ok" style="margin-top:0"><b>${who}</b> is signed in. Generating for them will now work.</p>`;
+    return;
+  }
+
+  if (flow.status === 'Failed') {
+    $('enrol-body').innerHTML =
+      `<p class="bad" style="margin-top:0">Sign-in failed for <b>${who}</b>.</p>
+       <p class="note">${esc(flow.error || '')}</p>
+       <button class="action ghost inline-btn" data-retry="${esc(flow.upn)}">Try again</button>`;
+    $('enrol-body').querySelector('[data-retry]').onclick = () => startEnrolment(flow.upn);
+    return;
+  }
+
+  if (!flow.userCode) {
+    $('enrol-body').innerHTML = '<p class="note" style="margin-top:0">Requesting a sign-in code...</p>';
+    return;
+  }
+
+  $('enrol-body').innerHTML =
+    `<p class="note" style="margin-top:0">Open the link, enter this code, and sign in as
+      <b>${who}</b>. Use a private window if you are already signed in as someone else.</p>
+     <div class="steps">
+       <span class="code" id="enrol-code">${esc(flow.userCode)}</span>
+       <button class="action inline-btn" id="enrol-copy">Copy code</button>
+       <a class="action inline-btn" style="text-decoration:none;text-align:center"
+          href="${esc(flow.verificationUrl)}" target="_blank" rel="noopener">Open sign-in page</a>
+     </div>
+     <p class="note" id="enrol-status">Waiting for the sign-in to complete...</p>`;
+
+  $('enrol-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(flow.userCode);
+      $('enrol-copy').textContent = 'Copied';
+    } catch { $('enrol-copy').textContent = 'Select and copy'; }
+  };
+}
+
+function pollEnrolment(id, person) {
+  clearInterval(enrolPoll);
+  enrolPoll = setInterval(async () => {
+    try {
+      const flow = await api('/api/enrol/' + encodeURIComponent(id));
+      if (flow.status === 'Enrolled' || flow.status === 'Failed') {
+        clearInterval(enrolPoll);
+        enrolPoll = null;
+        renderEnrolment(flow, person);
+        // Refresh the list so the badge and the dropdown agree with reality.
+        if (flow.status === 'Enrolled') loadPeople().catch(() => {});
+      } else if (flow.userCode && !$('enrol-code')) {
+        renderEnrolment(flow, person);
+      }
+    } catch (e) {
+      clearInterval(enrolPoll);
+      enrolPoll = null;
+      $('enrol-body').innerHTML = `<p class="bad">${esc(e.message)}</p>`;
+    }
+  }, 2500);
 }
 
 tabLoaders.overview = () => { loadHealth(); loadStats().catch(() => {}); };
 tabLoaders.activity = () => { loadActivity().catch(() => {}); };
+tabLoaders.generate = () => { updateEnrolBanner(); };
 tabLoaders.settings = () => { loadConfig().catch(() => {}); };
 
 /* ---- actions ------------------------------------------------------------- */
@@ -452,6 +594,7 @@ $('run-now').onclick = async () => {
 $('refresh').onclick = () => { loadStats().catch(() => {}); loadActivity().catch(() => {}); };
 for (const id of ['f-persona', 'f-kind', 'f-outcome']) $(id).onchange = () => loadActivity();
 $('f-since').onchange = () => { loadStats(); if (activeTab === 'activity') loadActivity(); };
+$('run-user').onchange = updateEnrolBanner;
 
 (async () => {
   await loadPeople().catch(() => {});

@@ -11,6 +11,7 @@ using TenantPulse.Core.Journaling;
 using TenantPulse.Core.Personas;
 using TenantPulse.Core.Storylines;
 using TenantPulse.Engine;
+using TenantPulse.Engine.Auth;
 
 namespace TenantPulse.Cli.Admin;
 
@@ -39,6 +40,9 @@ internal sealed class AdminServer(
     ILogger logger)
 {
     private static readonly string IndexHtml = LoadIndexHtml();
+
+    private readonly EnrolmentCoordinator _enrolments =
+        new(services.GetRequiredService<UserTokenBroker>(), logger);
 
     public async Task<WebApplication> StartAsync(int port, CancellationToken cancellationToken)
     {
@@ -70,20 +74,65 @@ internal sealed class AdminServer(
         app.MapPost("/api/config", (ConfigRequest request, HttpContext http, CancellationToken ct) =>
             UpdateConfigAsync(request, http, ct));
 
-        app.MapGet("/api/personas", () => Results.Ok(personas
-            .Where(p => !p.Excluded)
-            .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .Select(p => new
-            {
-                upn = p.UserPrincipalName,
-                name = p.DisplayName,
-                department = p.Department,
-                copilot = p.HasCopilotLicence
-            })));
+        app.MapGet("/api/personas", (CancellationToken ct) => PersonasAsync(ct));
 
         app.MapGet("/api/kinds", () => Results.Ok(Enum.GetNames<ActivityKind>().Order(StringComparer.Ordinal)));
 
         app.MapPost("/api/run", (RunRequest request, CancellationToken ct) => RunNowAsync(request, ct));
+
+        app.MapPost("/api/enrol", (EnrolRequest request) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Upn))
+            {
+                return Results.BadRequest(new { error = "A user is required." });
+            }
+
+            if (!personas.Any(p => p.UserPrincipalName.Equals(request.Upn, StringComparison.OrdinalIgnoreCase)))
+            {
+                return Results.BadRequest(new { error = $"No persona matches '{request.Upn}'." });
+            }
+
+            return Results.Ok(_enrolments.Start(request.Upn).ToPayload());
+        });
+
+        app.MapGet("/api/enrol/{id}", (string id) =>
+        {
+            var enrolment = _enrolments.Get(id);
+            return enrolment is null
+                ? Results.NotFound(new { error = "That enrolment is no longer being tracked." })
+                : Results.Ok(enrolment.ToPayload());
+        });
+    }
+
+    /// <summary>
+    /// The persona list carries enrolment state, because "nothing happened" is almost always an
+    /// unenrolled user rather than a broken simulator.
+    /// </summary>
+    private async Task<IResult> PersonasAsync(CancellationToken cancellationToken)
+    {
+        _ = cancellationToken;
+
+        var broker = services.GetRequiredService<UserTokenBroker>();
+        var active = personas
+            .Where(p => !p.Excluded)
+            .OrderBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var result = new List<object>(active.Count);
+
+        foreach (var persona in active)
+        {
+            result.Add(new
+            {
+                upn = persona.UserPrincipalName,
+                name = persona.DisplayName,
+                department = persona.Department,
+                copilot = persona.HasCopilotLicence,
+                enrolled = await broker.HasCachedAccountAsync(persona.UserPrincipalName).ConfigureAwait(false)
+            });
+        }
+
+        return Results.Ok(result);
     }
 
     private IResult Health(CancellationToken cancellationToken)
@@ -363,4 +412,6 @@ internal sealed class AdminServer(
         int? MaxActivitiesPerTenantPerHour);
 
     internal sealed record RunRequest(string? Upn, string? Kind, int? Count);
+
+    internal sealed record EnrolRequest(string? Upn);
 }

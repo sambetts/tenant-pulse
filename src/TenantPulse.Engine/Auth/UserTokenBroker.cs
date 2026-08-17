@@ -94,6 +94,31 @@ public sealed class UserTokenBroker : IUserTokenProvider
     }
 
     /// <summary>
+    /// Whether this user has a cached account at all, without touching the network.
+    /// <para>
+    /// Deliberately not <see cref="IsEnrolledAsync"/>: that one acquires a token, which in
+    /// <see cref="AuthMode.UsernamePassword"/> mode will happily <em>enrol</em> the user as a side
+    /// effect. Fine for a one-off check, wrong for a list endpoint that runs over every persona
+    /// whenever someone opens a page.
+    /// </para>
+    /// </summary>
+    public async Task<bool> HasCachedAccountAsync(string userPrincipalName)
+    {
+        try
+        {
+            var app = await GetAppAsync(userPrincipalName).ConfigureAwait(false);
+            var accounts = await app.GetAccountsAsync().ConfigureAwait(false);
+            return accounts.Any();
+        }
+        catch (Exception ex) when (ex is MsalException or IOException or InvalidOperationException)
+        {
+            _logger.LogDebug("Could not read the token cache for {Upn}: {Message}",
+                userPrincipalName, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Enrols a user interactively via device code. <paramref name="prompt"/> receives the
     /// "go to https://microsoft.com/devicelogin and enter CODE" instruction to show the operator.
     /// </summary>
