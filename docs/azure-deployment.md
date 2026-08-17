@@ -133,6 +133,49 @@ ContainerAppConsoleLogs_CL
 
 System events use `ContainerAppSystemLogs_CL`.
 
+### Activity workbook (the easy view)
+
+`scripts/deploy-report-workbook.ps1` deploys an Azure Workbook that reports what the simulator has
+done, readable from any browser with RBAC on the workspace and pinnable to a dashboard:
+
+```pwsh
+.\scripts\deploy-report-workbook.ps1
+```
+
+It shows outcomes, activity over time, a breakdown by workload and persona, every activity with a
+link straight to the artefact, failures, and engine health. Re-running updates the same workbook —
+the resource name is derived from the resource group and app name, so it never duplicates.
+
+This exists because the durable journal cannot be read from outside the VNet. Rather than opening
+the storage account, the simulator **pushes** a machine-readable event per activity to stdout, which
+Container Apps collects into Log Analytics automatically. `Simulation:EmitActivityEvents` controls
+it and is on by default.
+
+Each event is one line of JSON behind the marker `tenant-pulse-activity`. To query it directly:
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == "ca-tenant-pulse"
+| where Log_s contains "tenant-pulse-activity"
+| extend _brace = indexof(Log_s, "{")
+| where _brace >= 0
+| extend e = parse_json(substring(Log_s, _brace))
+| project TimeGenerated,
+          Kind = tostring(e.kind),
+          Outcome = tostring(e.outcome),
+          Persona = tostring(e.actor),
+          Topic = tostring(e.topic),
+          Link = tostring(e.link)
+| order by TimeGenerated desc
+```
+
+Use `contains`, not `has`: `has` matches whole terms, so a hyphenated marker tokenises and produces
+false positives.
+
+**Only the main container process is collected.** Anything run through `az containerapp exec` writes
+to the exec session, not to the container's stdout, so it never reaches Log Analytics. A `once`
+invocation run by hand will appear in the journal and in your terminal but never in the workbook.
+
 ### Durable activity report
 
 `report` is the authoritative view because it reads structured journal entries rather than console

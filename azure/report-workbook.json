@@ -1,0 +1,206 @@
+{
+  "version": "Notebook/1.0",
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## tenant-pulse activity\n\nWhat the simulator has actually done in the demo tenant, read from the activity events the container writes to stdout and Log Analytics collects.\n\nThe Azure Table journal remains the system of record and holds the purge paths, but it sits behind a private endpoint. This view is readable from any browser with RBAC on the workspace."
+      },
+      "name": "heading"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "0f5f1a2e-8f1f-4a2b-9c3d-0a1b2c3d4e5f",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 172800000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 }
+              ],
+              "allowCustom": true
+            },
+            "value": { "durationMs": 604800000 }
+          },
+          {
+            "id": "1a6f2b3c-9e2a-4b3c-8d4e-1b2c3d4e5f60",
+            "version": "KqlParameterItem/1.0",
+            "name": "Outcome",
+            "label": "Outcome",
+            "type": 2,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "typeSettings": {
+              "additionalResourceOptions": ["value::all"],
+              "showDefault": false
+            },
+            "jsonData": "[\"Executed\",\"Simulated\",\"Skipped\",\"Failed\"]",
+            "value": ["value::all"]
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '__APP_NAME__'\n| where Log_s contains 'tenant-pulse-activity'\n| extend _brace = indexof(Log_s, '{')\n| where _brace >= 0\n| extend e = parse_json(substring(Log_s, _brace))\n| extend Outcome = tostring(e.outcome)\n| where Outcome in ({Outcome}) or '*' in ({Outcome})\n| summarize Activities = count() by Outcome\n| order by Activities desc",
+        "size": 3,
+        "title": "Outcomes",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": { "columnMatch": "Outcome", "formatter": 1 },
+          "leftContent": {
+            "columnMatch": "Activities",
+            "formatter": 12,
+            "formatOptions": { "palette": "auto" }
+          },
+          "showBorder": true
+        }
+      },
+      "name": "outcomes"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '__APP_NAME__'\n| where Log_s contains 'tenant-pulse-activity'\n| extend _brace = indexof(Log_s, '{')\n| where _brace >= 0\n| extend e = parse_json(substring(Log_s, _brace))\n| extend Outcome = tostring(e.outcome)\n| where Outcome in ({Outcome}) or '*' in ({Outcome})\n| summarize Activities = count() by bin(TimeGenerated, 1h), Outcome\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Activity over time",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "over-time"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '__APP_NAME__'\n| where Log_s contains 'tenant-pulse-activity'\n| extend _brace = indexof(Log_s, '{')\n| where _brace >= 0\n| extend e = parse_json(substring(Log_s, _brace))\n| extend Outcome = tostring(e.outcome), Kind = tostring(e.kind), Workload = tostring(e.workload)\n| where Outcome in ({Outcome}) or '*' in ({Outcome})\n| summarize Activities = count() by Workload, Kind\n| order by Activities desc",
+        "size": 1,
+        "title": "By workload and activity kind",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Activities",
+              "formatter": 8,
+              "formatOptions": { "palette": "blue" }
+            }
+          ]
+        }
+      },
+      "name": "by-kind"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '__APP_NAME__'\n| where Log_s contains 'tenant-pulse-activity'\n| extend _brace = indexof(Log_s, '{')\n| where _brace >= 0\n| extend e = parse_json(substring(Log_s, _brace))\n| extend Outcome = tostring(e.outcome), Persona = tostring(e.actor), Upn = tostring(e.upn), Department = tostring(e.dept)\n| summarize Total = count(), Executed = countif(Outcome == 'Executed'), Skipped = countif(Outcome == 'Skipped'), Failed = countif(Outcome == 'Failed') by Persona, Department, Upn\n| order by Total desc",
+        "size": 1,
+        "title": "By persona",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Total",
+              "formatter": 8,
+              "formatOptions": { "palette": "blue" }
+            },
+            {
+              "columnMatch": "Failed",
+              "formatter": 8,
+              "formatOptions": { "palette": "red" }
+            }
+          ]
+        }
+      },
+      "name": "by-persona"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '__APP_NAME__'\n| where Log_s contains 'tenant-pulse-activity'\n| extend _brace = indexof(Log_s, '{')\n| where _brace >= 0\n| extend e = parse_json(substring(Log_s, _brace))\n| extend Outcome = tostring(e.outcome)\n| where Outcome in ({Outcome}) or '*' in ({Outcome})\n| project TimeGenerated, Outcome, Kind = tostring(e.kind), Persona = tostring(e.actor), Topic = tostring(e.topic), Detail = tostring(e.detail), Storyline = tostring(e.storyline), Link = tostring(e.link)\n| order by TimeGenerated desc\n| take 250",
+        "size": 0,
+        "title": "Everything done, most recent first",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Link",
+              "formatter": 7,
+              "formatOptions": {
+                "linkTarget": "Url",
+                "linkLabel": "open"
+              }
+            }
+          ],
+          "filter": true
+        }
+      },
+      "name": "recent"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '__APP_NAME__'\n| where Log_s contains 'tenant-pulse-activity'\n| extend _brace = indexof(Log_s, '{')\n| where _brace >= 0\n| extend e = parse_json(substring(Log_s, _brace))\n| where tostring(e.outcome) == 'Failed'\n| project TimeGenerated, Kind = tostring(e.kind), Persona = tostring(e.actor), Topic = tostring(e.topic), Error = tostring(e.error)\n| order by TimeGenerated desc\n| take 100",
+        "size": 0,
+        "title": "Failures",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": { "filter": true }
+      },
+      "name": "failures"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerAppName_s == '__APP_NAME__'\n| where Log_s contains 'falling back to templates' or Log_s contains 'Planned' or Log_s contains 'Unhandled'\n| project TimeGenerated, Log_s\n| order by TimeGenerated desc\n| take 100",
+        "size": 0,
+        "title": "Engine health (planning, content fallback, crashes)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": { "filter": true }
+      },
+      "name": "health"
+    }
+  ],
+  "fallbackResourceIds": ["__WORKSPACE_ID__"]
+}

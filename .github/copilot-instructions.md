@@ -92,6 +92,10 @@ Entra directory → GraphPersonaDirectory → Persona[] ────┴→ DayPl
 - **Read the hosted journal from inside the container**, not a workstation — storage keeps
   `publicNetworkAccess: Disabled`, so `report` gets `403 AuthorizationFailure` locally. Use
   `python.exe -Bm azure.cli containerapp exec` with `PYTHONIOENCODING=utf-8`; `-I` breaks it.
+- **Reporting pushes out via Log Analytics** — `ActivityEventLog` writes one ASCII, single-line JSON
+  event per activity behind the marker `tenant-pulse-activity`, and
+  `scripts/deploy-report-workbook.ps1` deploys a workbook over it. `az containerapp exec` output is
+  never collected, only the main process's stdout.
 - **Weekends really are near-silent** (160 activities Friday, 1 Saturday, 3 Sunday). Check the day
   before investigating "no activity".
 - **`NSubstitute` is pinned to 6.1.0** — 6.2.0 isn't on the internal NuGet feed.

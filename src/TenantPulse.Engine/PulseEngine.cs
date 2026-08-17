@@ -7,6 +7,7 @@ using TenantPulse.Core.Safety;
 using TenantPulse.Core.Scheduling;
 using TenantPulse.Core.Storylines;
 using TenantPulse.Core.Time;
+using TenantPulse.Engine.Telemetry;
 using ExecContext = TenantPulse.Core.Activities.ExecutionContext;
 
 namespace TenantPulse.Engine;
@@ -26,6 +27,7 @@ public sealed class PulseEngine(
     IActivityJournal journal,
     IEnumerable<IActivityExecutor> executors,
     IClock clock,
+    ActivityEventLog events,
     ILogger<PulseEngine> logger)
 {
     private readonly Dictionary<ActivityKind, IActivityExecutor> _executors =
@@ -192,6 +194,7 @@ public sealed class PulseEngine(
             logger.LogDebug("Skipped {Kind} for {Upn}: {Reason}",
                 intent.Kind, intent.Actor.UserPrincipalName, decision.Reason);
             await journal.RecordAsync(intent, skipped, cancellationToken).ConfigureAwait(false);
+            events.Record(intent, skipped);
             return skipped;
         }
 
@@ -199,6 +202,7 @@ public sealed class PulseEngine(
         {
             var missing = ActivityResult.Skipped($"No executor registered for {intent.Kind}.");
             await journal.RecordAsync(intent, missing, cancellationToken).ConfigureAwait(false);
+            events.Record(intent, missing);
             return missing;
         }
 
@@ -224,6 +228,7 @@ public sealed class PulseEngine(
 
         LogResult(intent, result);
         await journal.RecordAsync(intent, result, cancellationToken).ConfigureAwait(false);
+        events.Record(intent, result);
         return result;
     }
 

@@ -200,7 +200,22 @@ Things it does deliberately, which you should not undo:
   `report` pointed at `JournalTable__Endpoint`, which works only from inside the VNet. CDX-style
   governed subscriptions keep `publicNetworkAccess: Disabled` on the storage account, so a laptop
   gets `403 AuthorizationFailure` — a *network* refusal that looks like an RBAC problem and is not
-  fixed by granting `Storage Table Data Reader`. Run `report` inside the container instead.
+  fixed by granting `Storage Table Data Reader`. Run `report` inside the container instead, or use
+  the workbook below.
+- **Reporting pushes out, it is not reached in for.** Because the journal is private,
+  `ActivityEventLog` writes one line of JSON per activity to stdout behind the marker
+  `tenant-pulse-activity`; Container Apps collects it into Log Analytics, which is readable from any
+  browser with RBAC. `scripts/deploy-report-workbook.ps1` deploys the workbook over it. Three things
+  that will bite:
+  - **Only the main container process is collected.** `az containerapp exec` output goes to the exec
+    session, so a hand-run `once` never appears in Log Analytics — only in the journal.
+  - **Use `contains`, not `has`, for the marker.** `has` matches whole terms, so a hyphenated string
+    tokenises and matches unrelated lines.
+  - **`last` is a reserved word in KQL.** `summarize ..., last = max(TimeGenerated)` fails with a
+    bare `SYN0002` that looks like quoting damage. Rename the column.
+- **The payload must stay one line and pure ASCII.** The log collector emits one row per line, so a
+  wrapped event is unparseable, and the Windows `az` log viewer dies on any non-ASCII byte. The
+  default `System.Text.Json` encoder escapes both; `ActivityEventLogTests` pins it.
 - **No DPAPI or keyring exists in a container**, so `TokenCacheStore` falls back to an unencrypted
   MSAL cache. It still holds refresh tokens for every user — the volume must stay private.
 - **`run` needs a directory reader to start.** With an empty cache there is no enrolled user, so the

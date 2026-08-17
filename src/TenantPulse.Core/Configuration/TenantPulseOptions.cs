@@ -169,6 +169,17 @@ public sealed class SimulationOptions
     public string KillSwitchFile { get; set; } = ".state/STOP";
 
     /// <summary>
+    /// Emit one line of machine-readable JSON per activity to stdout, for log-based reporting.
+    /// <para>
+    /// This is what makes a hosted run observable. The Table journal is the durable record but sits
+    /// behind a private endpoint, whereas container stdout flows into Log Analytics and can be
+    /// queried from a browser anywhere. On by default: the cost is one extra log line per activity,
+    /// and the alternative is having no way to see what the simulator did.
+    /// </para>
+    /// </summary>
+    public bool EmitActivityEvents { get; set; } = true;
+
+    /// <summary>
     /// Header stamped on generated email so simulated content can always be identified and purged.
     /// </summary>
     public string MarkerHeaderName { get; set; } = "X-TenantPulse";

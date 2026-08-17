@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "comments": "Deploys the tenant-pulse activity workbook. A workbook needs 'kind' set at the resource level, which 'az resource create' cannot express, so this goes through a template."
+  },
+  "parameters": {
+    "workbookName": {
+      "type": "string",
+      "metadata": { "description": "GUID resource name, derived deterministically so re-runs update rather than duplicate." }
+    },
+    "workbookDisplayName": {
+      "type": "string"
+    },
+    "workbookSourceId": {
+      "type": "string",
+      "metadata": { "description": "Log Analytics workspace resource id the workbook queries and is listed under." }
+    },
+    "workbookContent": {
+      "type": "string",
+      "metadata": { "description": "The serialised workbook definition." }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Insights/workbooks",
+      "apiVersion": "2022-04-01",
+      "name": "[parameters('workbookName')]",
+      "location": "[parameters('location')]",
+      "kind": "shared",
+      "properties": {
+        "displayName": "[parameters('workbookDisplayName')]",
+        "serializedData": "[parameters('workbookContent')]",
+        "version": "Notebook/1.0",
+        "sourceId": "[parameters('workbookSourceId')]",
+        "category": "workbook"
+      }
+    }
+  ],
+  "outputs": {
+    "workbookId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Insights/workbooks', parameters('workbookName'))]"
+    }
+  }
+}

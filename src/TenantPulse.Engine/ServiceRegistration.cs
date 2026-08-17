@@ -12,6 +12,7 @@ using TenantPulse.Engine.Auth;
 using TenantPulse.Engine.Content;
 using TenantPulse.Engine.Copilot;
 using TenantPulse.Engine.Graph;
+using TenantPulse.Engine.Telemetry;
 using TenantPulse.Engine.Journaling;
 using TenantPulse.Engine.Personas;
 
@@ -45,6 +46,7 @@ public static class ServiceRegistration
 
         services.AddSingleton<GraphPersonaDirectory>();
         services.AddSingleton<CopilotUsageVerifier>();
+        services.AddSingleton<ActivityEventLog>();
         services.AddSingleton<PulseEngine>();
 
         AddContentGeneration(services, options);

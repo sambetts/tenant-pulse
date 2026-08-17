@@ -50,6 +50,8 @@
         "TableName": "TenantPulseJournal"
       },
       "KillSwitchFile": ".state/STOP",
+      "//EmitActivityEvents": "Write one line of machine-readable JSON per activity to stdout, for log-based reporting. This is what makes a hosted run observable when the journal sits behind a private endpoint.",
+      "EmitActivityEvents": true,
       "MarkerHeaderName": "X-TenantPulse",
       "MarkerValue": "simulated"
     },
